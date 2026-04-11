@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from app.controllers import LoginController
 from fastapi.middleware.cors import CORSMiddleware
+from db import supabase
 
 app = FastAPI()
 
