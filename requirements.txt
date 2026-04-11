@@ -4,3 +4,4 @@ bcrypt
 python-jose[cryptography]
 supabase
 python-dotenv
+email-validator
