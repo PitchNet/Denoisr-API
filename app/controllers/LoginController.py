@@ -206,17 +206,17 @@ def login(data: LoginRequest):
 
     user = supabase.table("users") \
         .select("*") \
-        .eq("email", data.email) \
+        .eq("emailaddress", data.email) \
         .single() \
         .execute()
 
     if not user.data:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    if not verify_password(data.password, user.data["password"]):
+    if not verify_password(data.password, user.data["passwordhash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    token = create_access_token({"sub": user.data["email"]})
+    token = create_access_token({"sub": user.data["emailaddress"]})
 
     return {
         "access_token": token,
