@@ -153,10 +153,22 @@ def fetch_jobs(filters: Dict[str, Any]):
 
         # Country / City → requires DB columns OR fallback text search
         if country:
-            query = query.ilike("location", f"%{country}%")
+            countries = [c.strip() for c in country.split(",") if c.strip()]
+
+            if countries:
+                or_conditions = ",".join(
+                    [f"location.ilike.%{c}%" for c in countries]
+                )
+                query = query.or_(or_conditions)
 
         if city:
-            query = query.ilike("location", f"%{city}%")
+            cities = [c.strip() for c in city.split(",") if c.strip()]
+
+            if cities:
+                or_conditions = ",".join(
+                    [f"location.ilike.%{c}%" for c in cities]
+                )
+                query = query.or_(or_conditions)
 
         # Salary → max salary
         if salary is not None:
