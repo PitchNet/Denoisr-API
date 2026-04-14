@@ -234,6 +234,7 @@ def fetch_jobs(filters: Dict[str, Any]):
 
             result.append({
                 "id": job_id,
+                "kind": "jobs",
                 "headline": job.get("headline"),
                 "subheadline": job.get("subheadline"),
                 "organization": job.get("organization"),
@@ -241,7 +242,6 @@ def fetch_jobs(filters: Dict[str, Any]):
                 "experience": job.get("experience"),
                 "salary": job.get("salary"),
                 "intro": job.get("intro"),
-
                 "highlights": highlights_map.get(job_id, []),
                 "tags": tags_map.get(job_id, []),
 
