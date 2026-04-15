@@ -230,3 +230,8 @@ def profile(current_user: dict = Depends(get_current_user)):
         "message": f"Welcome {current_user['email']}",
         "user": current_user
     }
+
+
+@router.post("/keepAlive")
+def keepAlive():
+    return ("Hi!")
