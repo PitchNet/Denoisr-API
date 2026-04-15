@@ -232,6 +232,6 @@ def profile(current_user: dict = Depends(get_current_user)):
     }
 
 
-@router.post("/keepAlive")
+@router.get("/keepAlive")
 def keepAlive():
     return ("Hi!")
