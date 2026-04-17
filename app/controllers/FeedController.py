@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, status, Depends
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import OAuth2PasswordBearer, HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
 from jose import jwt, JWTError
 from datetime import datetime, timedelta
@@ -13,6 +13,7 @@ from collections import defaultdict
 # Load ENV
 # --------------------------
 load_dotenv()
+security = HTTPBearer()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -30,6 +31,33 @@ router = APIRouter(prefix="/FeedController", tags=["Feed"])
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+
+# --------------------------
+# Helper Methods
+# --------------------------
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        
+        # Common fields:
+        user_id = payload.get("sub")  # or "user_id" depending on your token
+        
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User ID not found in token"
+            )
+        
+        return user_id
+
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
 
 
 # --------------------------
@@ -121,7 +149,7 @@ def insert_jobs(jobs: List[Dict[str, Any]]):
 
 
 @router.post("/fetchJobs", response_model=List[Dict[str, Any]])
-def fetch_jobs(filters: Dict[str, Any]):
+def fetch_jobs(filters: Dict[str, Any], user_id: str = Depends(get_current_user)):
 
     try:
         # --------------------------
@@ -134,7 +162,17 @@ def fetch_jobs(filters: Dict[str, Any]):
         country = filters.get("country")
         city = filters.get("city")
         salary = filters.get("salary")
+        
+        accepted_job_ids = []
 
+        if user_id:
+            accepted_res = supabase.table("user_job_actions") \
+                .select("job_id") \
+                .eq("user_id", user_id) \
+                .eq("action", "accepted") \
+                .execute()
+
+            accepted_job_ids = [a["job_id"] for a in (accepted_res.data or [])]
         # --------------------------
         # 2. Filtering logic
         # --------------------------
@@ -173,6 +211,10 @@ def fetch_jobs(filters: Dict[str, Any]):
         # Salary → max salary
         if salary is not None:
             query = query.lte("salary", salary)
+
+        # Exclude accepted jobs
+        if accepted_job_ids:
+            query = query.not_.in_("id", accepted_job_ids)
 
         # --------------------------
         # 3. Fetch jobs
@@ -258,3 +300,26 @@ def fetch_jobs(filters: Dict[str, Any]):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/jobAction")
+def accept_job(payload: Dict[str, str]):
+
+    user_id = payload.get("userId")
+    job_id = payload.get("jobId")
+
+    if not user_id or not job_id:
+        raise HTTPException(status_code=400, detail="Missing fields")
+
+    try:
+        supabase.table("user_job_actions").upsert({
+            "user_id": user_id,
+            "job_id": job_id,
+            "action": "accepted"
+        }).execute()
+
+        return {"message": "Job accepted"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
