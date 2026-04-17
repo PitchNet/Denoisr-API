@@ -155,7 +155,16 @@ def fetch_jobs(filters: Dict[str, Any], user_id: str = Depends(get_current_user)
         # --------------------------
         # 1. Base query
         # --------------------------
-        query = supabase.table("jobs").select("*")
+        query = supabase.table("jobs").select("""
+            *,
+            job_highlights(highlight),
+            job_tags(tag),
+            job_sections(
+                id,
+                title,
+                job_section_items(item)
+            )
+        """)
 
         role = filters.get("role")
         experience = filters.get("experience")
@@ -220,62 +229,20 @@ def fetch_jobs(filters: Dict[str, Any], user_id: str = Depends(get_current_user)
         # 3. Fetch jobs
         # --------------------------
         jobs_res = query.execute()
+
         jobs = jobs_res.data or []
 
         if not jobs:
             return []
 
-        job_ids = [j["id"] for j in jobs]
-
-        # --------------------------
-        # 4. Fetch relations (batched)
-        # --------------------------
-        highlights = supabase.table("job_highlights") \
-            .select("*").in_("job_id", job_ids).execute().data or []
-
-        tags = supabase.table("job_tags") \
-            .select("*").in_("job_id", job_ids).execute().data or []
-
-        sections = supabase.table("job_sections") \
-            .select("*").in_("job_id", job_ids).execute().data or []
-
-        section_ids = [s["id"] for s in sections]
-
-        items = []
-        if section_ids:
-            items = supabase.table("job_section_items") \
-                .select("*").in_("section_id", section_ids).execute().data or []
-
         # --------------------------
         # 5. Grouping
-        # --------------------------
-        highlights_map = defaultdict(list)
-        for h in highlights:
-            highlights_map[h["job_id"]].append(h["highlight"])
-
-        tags_map = defaultdict(list)
-        for t in tags:
-            tags_map[t["job_id"]].append(t["tag"])
-
-        sections_map = defaultdict(list)
-        for s in sections:
-            sections_map[s["job_id"]].append(s)
-
-        items_map = defaultdict(list)
-        for i in items:
-            items_map[i["section_id"]].append(i["item"])
-
-        # --------------------------
-        # 6. Build response
         # --------------------------
         result = []
 
         for job in jobs:
-
-            job_id = job["id"]
-
             result.append({
-                "id": job_id,
+                "id": job["id"],
                 "kind": "jobs",
                 "headline": job.get("headline"),
                 "subheadline": job.get("subheadline"),
@@ -284,15 +251,23 @@ def fetch_jobs(filters: Dict[str, Any], user_id: str = Depends(get_current_user)
                 "experience": job.get("experience"),
                 "salary": job.get("salary"),
                 "intro": job.get("intro"),
-                "highlights": highlights_map.get(job_id, []),
-                "tags": tags_map.get(job_id, []),
+
+                "highlights": [
+                    h["highlight"] for h in job.get("job_highlights", [])
+                ],
+
+                "tags": [
+                    t["tag"] for t in job.get("job_tags", [])
+                ],
 
                 "sections": [
                     {
-                        "title": s.get("title"),
-                        "items": items_map.get(s["id"], [])
+                        "title": s["title"],
+                        "items": [
+                            i["item"] for i in s.get("job_section_items", [])
+                        ]
                     }
-                    for s in sections_map.get(job_id, [])
+                    for s in job.get("job_sections", [])
                 ]
             })
 
