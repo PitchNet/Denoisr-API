@@ -278,9 +278,8 @@ def fetch_jobs(filters: Dict[str, Any], user_id: str = Depends(get_current_user)
 
 
 @router.post("/jobAction")
-def accept_job(payload: Dict[str, str]):
+def accept_job(payload: Dict[str, str], user_id: str = Depends(get_current_user)):
 
-    user_id = payload.get("userId")
     job_id = payload.get("jobId")
 
     if not user_id or not job_id:
