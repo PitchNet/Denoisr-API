@@ -195,9 +195,12 @@ def signup(user: UserCreate):
     if mappings:
         supabase.table("userskillmapping").insert(mappings).execute()
 
+    token = create_access_token({"sub": user_id})
+
     return {
         "message": "User created successfully",
-        "user": insert.data[0]
+        "user": insert.data[0],
+        "access_token": token
     }
 
 
