@@ -55,6 +55,7 @@ class UserCreate(BaseModel):
     portfolioUrl: str | None = None
     workPreference: str | None = None
     proofOfWork: str | None = None
+    organization: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -127,8 +128,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 @router.post("/signup", status_code=201)
 def signup(user: UserCreate):
 
-    # 1. Check if user exists
-    existing = supabase.table("users") \
+    # 1. Check if user exists in new People schema
+    existing = supabase.table("people") \
         .select("emailaddress") \
         .eq("emailaddress", user.email) \
         .execute()
@@ -143,18 +144,19 @@ def signup(user: UserCreate):
     user_payload = {
         "emailaddress": user.email,
         "passwordhash": hashed_pw,
-        "name": user.name,
+        "headline": user.name,
         "phonenumber": user.phoneNumber,
-        "country": user.country,
-        "currentrole": user.currentRole,
-        "yearsofexperience": user.yearsOfExperience,
+        "location": user.country,
+        "subheadline": user.currentRole,
+        "experience": user.yearsOfExperience,
         "availablefrom": user.availableFrom,
         "portfoliourl": user.portfolioUrl,
         "workpreference": user.workPreference,
-        "introduction": user.proofOfWork,
+        "intro": user.proofOfWork,
+        "organization": user.organization
     }
 
-    insert = supabase.table("users").insert(user_payload).execute()
+    insert = supabase.table("people").insert(user_payload).execute()
 
     if not insert.data:
         raise HTTPException(status_code=500, detail="User creation failed")
@@ -162,40 +164,20 @@ def signup(user: UserCreate):
     user_row = insert.data[0]
     user_id = user_row["id"]
 
-    # 4. Fetch all skill IDs in one query (OPTIMIZED)
-    skill_names = [s.name for s in user.skills]
+    # 4. Map highlights (treat user.skills as highlights in new schema)
+    person_id = user_id
+    try:
+        highlights = user.skills or []
+        if highlights:
+            supabase.table("people_highlights").insert([
+                {"person_id": person_id, "highlight": s.name}
+                for s in highlights
+            ]).execute()
+    except Exception:
+        pass
 
-    skills_res = supabase.table("skills") \
-        .select("id, name") \
-        .in_("name", skill_names) \
-        .execute()
-
-    if not skills_res.data:
-        raise HTTPException(status_code=400, detail="No matching skills found")
-
-    skills_map = {s["name"]: s["id"] for s in skills_res.data}
-
-    # 5. Insert into UserSkillMapping
-    mappings = []
-
-    for skill in user.skills:
-        skill_id = skills_map.get(skill.name)
-
-        if not skill_id:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Skill not found: {skill.name}"
-            )
-
-        mappings.append({
-            "userid": user_id,
-            "skillid": skill_id
-        })
-
-    if mappings:
-        supabase.table("userskillmapping").insert(mappings).execute()
-
-    token = create_access_token({"sub": user_id})
+    token_sub = person_id if person_id else user_id
+    token = create_access_token({"sub": token_sub})
 
     return {
         "message": "User created successfully",
@@ -207,7 +189,7 @@ def signup(user: UserCreate):
 @router.post("/login")
 def login(data: LoginRequest):
 
-    user = supabase.table("users") \
+    user = supabase.table("people") \
         .select("*") \
         .eq("emailaddress", data.email) \
         .single() \

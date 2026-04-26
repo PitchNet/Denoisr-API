@@ -41,17 +41,24 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
 
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        
-        # Common fields:
-        user_id = payload.get("sub")  # or "user_id" depending on your token
-        
-        if user_id is None:
+        subject = payload.get("sub")  # Could be emailaddress or id
+
+        if not subject:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User ID not found in token"
+                detail="Invalid token: subject missing"
             )
-        
-        return user_id
+
+        # Try to fetch by emailaddress first
+        user = supabase.table("people").select("*").eq("id", subject).single().execute()
+        if not user.data:
+            # Fallback: try by id
+            user = supabase.table("people").select("*").eq("id", subject).single().execute()
+
+        if not user.data:
+            raise HTTPException(status_code=401, detail="User not found")
+
+        return user.data
 
     except JWTError:
         raise HTTPException(
