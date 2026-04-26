@@ -38,23 +38,25 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/LoginController/login")
 # --------------------------
 # Models (UPDATED for your payload)
 # --------------------------
-class Skill(BaseModel):
-    name: str
-    proficiency: int
+class SectionModel(BaseModel):
+    title: str
+    items: list[str] = []
 
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
-    name: str | None = None
     phoneNumber: str | None = None
-    country: str | None = None
+    kind: str | None = "people"
+    name: str | None = None
     currentRole: str | None = None
-    yearsOfExperience: int | None = None
-    availableFrom: str | None = None
-    skills: list[Skill] = []
-    portfolioUrl: str | None = None
-    workPreference: str | None = None
-    proofOfWork: str | None = None
+    organization: str | None = None
+    location: str | None = None
+    experience: int | None = None
+    salary: int | None = None
+    intro: str | None = None
+    highlights: list[str] = []
+    tags: list[str] = []
+    sections: list[SectionModel] = []
     organization: str | None = None
     intro: str | None = None
 
@@ -141,20 +143,24 @@ def signup(user: UserCreate):
     # 2. Hash password
     hashed_pw = hash_password(user.password)
 
-    # 3. Insert user
+    # 3. Insert user (into new People schema)
     user_payload = {
         "emailaddress": user.email,
         "passwordhash": hashed_pw,
         "headline": user.name,
         "phonenumber": user.phoneNumber,
-        "location": user.country,
+        "location": user.location,
         "subheadline": user.currentRole,
-        "experience": user.yearsOfExperience,
-        "availablefrom": user.availableFrom,
-        "portfoliourl": user.portfolioUrl,
-        "workpreference": user.workPreference,
+        "experience": user.experience,
+        "salary": user.salary,
         "intro": user.intro,
-        "organization": user.organization
+        "organization": user.organization,
+        #"workpreference": user.workPreference,
+        #"country": None,
+        "currentrole": user.currentRole,
+        "introduction": user.intro,
+        "name": user.name,
+        "experience": user.experience
     }
 
     insert = supabase.table("people").insert(user_payload).execute()
@@ -165,17 +171,41 @@ def signup(user: UserCreate):
     user_row = insert.data[0]
     user_id = user_row["id"]
 
-    # 4. Map highlights (treat user.skills as highlights in new schema)
+    # 4. Highlights from payload
     person_id = user_id
     try:
-        highlights = user.skills or []
+        highlights = user.highlights or []
         if highlights:
             supabase.table("people_highlights").insert([
-                {"person_id": person_id, "highlight": s.name}
-                for s in highlights
+                {"person_id": person_id, "highlight": h}
+                for h in highlights
             ]).execute()
     except Exception:
         pass
+
+    # 5. Tags
+    tags = user.tags or []
+    if tags:
+        supabase.table("people_tags").insert([
+            {"person_id": person_id, "tag": t}
+            for t in tags
+        ]).execute()
+
+    # 6. Sections + Items
+    sections = user.sections or []
+    for section in sections:
+        section_insert = (
+            supabase.table("people_sections").insert({"person_id": person_id, "title": section.title}).execute()
+        )
+        if not section_insert.data:
+            raise HTTPException(status_code=500, detail="Section insert failed")
+        section_id = section_insert.data[0]["id"]
+        items = section.items or []
+        if items:
+            supabase.table("people_section_items").insert([
+                {"section_id": section_id, "item": item}
+                for item in items
+            ]).execute()
 
     token_sub = person_id if person_id else user_id
     token = create_access_token({"sub": token_sub})
