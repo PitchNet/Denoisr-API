@@ -147,6 +147,88 @@ def insert_jobs(jobs: List[Dict[str, Any]]):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/fetchPeople", response_model=List[Dict[str, Any]])
+def fetch_people(filters: Dict[str, Any], user_id: str = Depends(get_current_user)):
+    try:
+        # Base query with related data
+        query = (
+            supabase.table("people").select(
+                "*, "
+                "people_highlights(highlight), "
+                "people_tags(tag), "
+                "people_sections(id, title, people_section_items(item))"
+            )
+        )
+
+        # Simple filtering similar to fetchJobs (optional)
+        role = filters.get("role")
+        experience = filters.get("experience")
+        country = filters.get("country")
+        city = filters.get("city")
+        salary = filters.get("salary")
+
+        if role:
+            query = query.or_(
+                f"headline.ilike.%{role}%,subheadline.ilike.%{role}%,intro.ilike.%{role}%"
+            )
+
+        if experience is not None:
+            query = query.lte("experience", experience)
+
+        if country:
+            countries = [c.strip() for c in country.split(",") if c.strip()]
+            if countries:
+                or_conditions = ",".join([f"location.ilike.%{c}%" for c in countries])
+                query = query.or_(or_conditions)
+
+        if city:
+            cities = [c.strip() for c in city.split(",") if c.strip()]
+            if cities:
+                or_conditions = ",".join([f"location.ilike.%{c}%" for c in cities])
+                query = query.or_(or_conditions)
+
+        if salary is not None:
+            query = query.lte("salary", salary)
+
+        people_res = query.execute()
+        people = people_res.data or []
+
+        result: List[Dict[str, Any]] = []
+
+        for p in people:
+            pid = p.get("id")
+
+            highlights = [h["highlight"] for h in p.get("people_highlights", []) if "highlight" in h]
+            tags = [t["tag"] for t in p.get("people_tags", []) if "tag" in t]
+
+            sections_raw = p.get("people_sections", [])
+            sections: List[Dict[str, Any]] = []
+            for sec in sections_raw:
+                sec_id = sec.get("id")
+                title = sec.get("title")
+                items = [it["item"] for it in sec.get("people_section_items", []) if "item" in it]
+                sections.append({"title": title, "items": items})
+
+            result.append({
+                "id": pid,
+                "kind": p.get("kind", "people"),
+                "headline": p.get("headline"),
+                "subheadline": p.get("subheadline"),
+                "organization": p.get("organization"),
+                "location": p.get("location"),
+                "experience": p.get("experience"),
+                "salary": p.get("salary"),
+                "intro": p.get("intro"),
+                "highlights": highlights,
+                "tags": tags,
+                "sections": sections,
+            })
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/fetchJobs", response_model=List[Dict[str, Any]])
 def fetch_jobs(filters: Dict[str, Any], user_id: str = Depends(get_current_user)):
@@ -297,3 +379,64 @@ def accept_job(payload: Dict[str, str], user_id: str = Depends(get_current_user)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.post("/InsertPeople", status_code=201)
+def insert_people(people: List[Dict[str, Any]]):
+    try:
+        for person in people:
+            person_payload = {
+                "headline": person.get("headline"),
+                "subheadline": person.get("subheadline"),
+                "organization": person.get("organization"),
+                "location": person.get("location"),
+                "experience": person.get("experience"),
+                "salary": person.get("salary"),
+                "intro": person.get("intro"),
+            }
+
+            person_insert = (
+                supabase.table("people").insert(person_payload).execute()
+            )
+
+            if not person_insert.data:
+                raise HTTPException(status_code=500, detail="Person insert failed")
+
+            person_id = person_insert.data[0]["id"]
+
+            # Highlights
+            highlights = person.get("highlights") or []
+            if highlights:
+                supabase.table("people_highlights").insert([
+                    {"person_id": person_id, "highlight": h}
+                    for h in highlights
+                ]).execute()
+
+            # Tags
+            tags = person.get("tags") or []
+            if tags:
+                supabase.table("people_tags").insert([
+                    {"person_id": person_id, "tag": t}
+                    for t in tags
+                ]).execute()
+
+            # Sections + Items
+            sections = person.get("sections") or []
+            for section in sections:
+                section_insert = (
+                    supabase.table("people_sections")
+                    .insert({"person_id": person_id, "title": section.get("title")})
+                    .execute()
+                )
+                if not section_insert.data:
+                    raise HTTPException(status_code=500, detail="Section insert failed")
+                section_id = section_insert.data[0]["id"]
+                items = section.get("items") or []
+                if items:
+                    supabase.table("people_section_items").insert([
+                        {"section_id": section_id, "item": item}
+                        for item in items
+                    ]).execute()
+
+        return {"message": "People inserted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
