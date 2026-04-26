@@ -264,6 +264,7 @@ def fetch_jobs(filters: Dict[str, Any], user_id: str = Depends(get_current_user)
         accepted_job_ids = []
 
         if user_id:
+            user_id = user_id["id"]
             accepted_res = supabase.table("user_job_actions") \
                 .select("job_id") \
                 .eq("user_id", user_id) \
