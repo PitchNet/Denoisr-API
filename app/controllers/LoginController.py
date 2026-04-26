@@ -56,6 +56,7 @@ class UserCreate(BaseModel):
     workPreference: str | None = None
     proofOfWork: str | None = None
     organization: str | None = None
+    intro: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -152,7 +153,7 @@ def signup(user: UserCreate):
         "availablefrom": user.availableFrom,
         "portfoliourl": user.portfolioUrl,
         "workpreference": user.workPreference,
-        "intro": user.proofOfWork,
+        "intro": user.intro,
         "organization": user.organization
     }
 
