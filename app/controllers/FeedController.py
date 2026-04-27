@@ -155,7 +155,7 @@ def insert_jobs(jobs: List[Dict[str, Any]]):
 
 
 @router.post("/fetchPeople", response_model=List[Dict[str, Any]])
-def fetch_people(filters: Dict[str, Any], user_id: str = Depends(get_current_user)):
+def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user)):
     try:
         # Base query with related data
         query = (
@@ -238,7 +238,7 @@ def fetch_people(filters: Dict[str, Any], user_id: str = Depends(get_current_use
 
 
 @router.post("/fetchJobs", response_model=List[Dict[str, Any]])
-def fetch_jobs(filters: Dict[str, Any], user_id: str = Depends(get_current_user)):
+def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
 
     try:
         # --------------------------
@@ -263,11 +263,10 @@ def fetch_jobs(filters: Dict[str, Any], user_id: str = Depends(get_current_user)
         
         accepted_job_ids = []
 
-        if user_id:
-            user_id = user_id["id"]
+        if user: 
             accepted_res = supabase.table("user_job_actions") \
                 .select("job_id") \
-                .eq("user_id", user_id) \
+                .eq("user_id", user["id"]) \
                 .eq("action", "accepted") \
                 .execute()
 
@@ -368,21 +367,41 @@ def fetch_jobs(filters: Dict[str, Any], user_id: str = Depends(get_current_user)
 
 
 @router.post("/jobAction")
-def accept_job(payload: Dict[str, str], user_id: str = Depends(get_current_user)):
+def accept_job(payload: Dict[str, str], user: str = Depends(get_current_user)):
 
     job_id = payload.get("jobId")
 
-    if not user_id or not job_id:
+    if not user or not job_id:
         raise HTTPException(status_code=400, detail="Missing fields")
 
     try:
         supabase.table("user_job_actions").upsert({
-            "user_id": user_id,
+            "user_id": user["id"],
             "job_id": job_id,
             "action": "accepted"
         }).execute()
 
         return {"message": "Job accepted"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/peopleAction")
+def connect_people(payload: Dict[str, str], user: str = Depends(get_current_user)):
+
+    people_id = payload.get("peopleId")
+
+    if not user or not people_id:
+        raise HTTPException(status_code=400, detail="Missing fields")
+
+    try:
+        supabase.table("user_people_actions").upsert({
+            "user_id": user["id"],
+            "people_id": people_id,
+            "action": "sent"
+        }).execute()
+
+        return {"message": "Connection request sent"}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
