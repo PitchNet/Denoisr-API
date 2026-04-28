@@ -390,7 +390,7 @@ def accept_job(payload: Dict[str, str], user: str = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/peopleAction")
-def connect_people(payload: Dict[str, str], user: str = Depends(get_current_user)):
+def connect_people(payload: Dict[str, str], user: dict = Depends(get_current_user)):
 
     people_id = payload.get("peopleId")
 
@@ -398,13 +398,40 @@ def connect_people(payload: Dict[str, str], user: str = Depends(get_current_user
         raise HTTPException(status_code=400, detail="Missing fields")
 
     try:
-        supabase.table("user_people_actions").upsert({
-            "user_id": user["id"],
-            "people_id": people_id,
-            "action": "sent"
-        }).execute()
+        # 1. Check if the other person already sent a request to me
+        reverse_res = supabase.table("user_people_actions") \
+            .select("*") \
+            .eq("user_id", people_id) \
+            .eq("people_id", user["id"]) \
+            .execute()
 
-        return {"message": "Connection request sent"}
+        reverse_exists = reverse_res.data and len(reverse_res.data) > 0
+
+        if reverse_exists:
+            # 2. Mutual connection found → update both to "connected"
+            supabase.table("user_people_actions").upsert({
+                "user_id": user["id"],
+                "people_id": people_id,
+                "action": "connected"
+            }).execute()
+
+            supabase.table("user_people_actions").update({
+                "action": "connected"
+            }).eq("user_id", people_id) \
+             .eq("people_id", user["id"]) \
+             .execute()
+
+            return {"message": "It's a match! You are now connected", "matched": True}
+
+        else:
+            # 3. Normal request
+            supabase.table("user_people_actions").upsert({
+                "user_id": user["id"],
+                "people_id": people_id,
+                "action": "sent"
+            }).execute()
+
+            return {"message": "Connection request sent", "matched": False}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
