@@ -167,6 +167,9 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
             )
         )
 
+        # Exclude current user
+        query = query.neq("id", user["id"])
+
         # Simple filtering similar to fetchJobs (optional)
         role = filters.get("role")
         experience = filters.get("experience")
