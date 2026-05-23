@@ -240,6 +240,78 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/getConnections", response_model=List[Dict[str, Any]])
+def get_connections(user: dict = Depends(get_current_user)):
+    try:
+        # Fetch connected person IDs for the current user
+        connected_res = supabase.table("user_people_actions") \
+            .select("people_id") \
+            .eq("user_id", user["id"]) \
+            .eq("action", "connected") \
+            .execute()
+
+        connected_ids = {c["people_id"] for c in (connected_res.data or [])}
+
+        query = supabase.table("people").select(
+            "*, "
+            "people_highlights(highlight), "
+            "people_tags(tag), "
+            "people_sections(id, title, people_section_items(item))"
+        )
+
+        # Exclude current user
+        query = query.neq("id", user["id"])
+
+        people_res = query.execute()
+        people = people_res.data or []
+
+        def make_avatar(name: str | None) -> str:
+            if not name:
+                return "??"
+            parts = name.strip().split()
+            initials = "".join(p[0].upper() for p in parts if p)
+            return initials[:2]
+
+        def make_preview(intro: str | None) -> str:
+            if not intro:
+                return ""
+            return intro.strip()
+
+        result: List[Dict[str, Any]] = []
+
+        for p in people:
+            pid = p["id"]
+            highlights = [h["highlight"] for h in p.get("people_highlights", []) if "highlight" in h]
+            tags = [t["tag"] for t in p.get("people_tags", []) if "tag" in t]
+
+            sections_raw = p.get("people_sections", [])
+            details: List[Dict[str, Any]] = []
+            for sec in sections_raw:
+                title = sec.get("title")
+                items = [it["item"] for it in sec.get("people_section_items", []) if "item" in it]
+                body = ". ".join(items)
+                if title and body:
+                    details.append({"title": title, "body": body})
+
+            result.append({
+                "id": pid,
+                "name": p.get("headline"),
+                "preview": make_preview(p.get("intro")),
+                "avatar": make_avatar(p.get("headline")),
+                "role": p.get("subheadline"),
+                "status": tags[0] if tags else "Open to roles",
+                "openable": True,
+                "chips": highlights,
+                "details": details,
+                "connected": pid in connected_ids,
+            })
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/fetchJobs", response_model=List[Dict[str, Any]])
 def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
 
