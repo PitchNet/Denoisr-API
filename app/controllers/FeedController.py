@@ -259,8 +259,11 @@ def get_connections(user: dict = Depends(get_current_user)):
             "people_sections(id, title, people_section_items(item))"
         )
 
-        # Exclude current user
-        query = query.neq("id", user["id"])
+        # Only include connected people
+        if connected_ids:
+            query = query.in_("id", list(connected_ids))
+        else:
+            query = query.limit(0)
 
         people_res = query.execute()
         people = people_res.data or []
