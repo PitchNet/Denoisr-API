@@ -252,6 +252,26 @@ def get_connections(user: dict = Depends(get_current_user)):
 
         connected_ids = {c["people_id"] for c in (connected_res.data or [])}
 
+        # Build map of person_id -> conversation_id
+        conversation_map: Dict[str, str] = {}
+        if connected_ids:
+            my_parts = supabase.table("conversation_participants") \
+                .select("conversation_id") \
+                .eq("user_id", user["id"]) \
+                .execute()
+
+            my_conv_ids = [c["conversation_id"] for c in (my_parts.data or [])]
+
+            if my_conv_ids:
+                their_parts = supabase.table("conversation_participants") \
+                    .select("conversation_id, user_id") \
+                    .in_("user_id", list(connected_ids)) \
+                    .in_("conversation_id", my_conv_ids) \
+                    .execute()
+
+                for p in (their_parts.data or []):
+                    conversation_map[p["user_id"]] = p["conversation_id"]
+
         query = supabase.table("people").select(
             "*, "
             "people_highlights(highlight), "
@@ -307,6 +327,7 @@ def get_connections(user: dict = Depends(get_current_user)):
                 "chips": highlights,
                 "details": details,
                 "connected": pid in connected_ids,
+                "conversationId": conversation_map.get(pid),
             })
 
         return result
