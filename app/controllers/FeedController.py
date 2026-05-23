@@ -572,3 +572,112 @@ def insert_people(people: List[Dict[str, Any]]):
         return {"message": "People inserted successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sendMessage")
+def send_message(payload: Dict[str, str], user: dict = Depends(get_current_user)):
+    recipient_id = payload.get("recipientId")
+    content = payload.get("content")
+
+    if not recipient_id or not content:
+        raise HTTPException(status_code=400, detail="Missing recipientId or content")
+
+    try:
+        # Find existing conversation between the two users
+        my_convs = supabase.table("conversation_participants") \
+            .select("conversation_id") \
+            .eq("user_id", user["id"]) \
+            .execute()
+
+        my_conv_ids = [c["conversation_id"] for c in (my_convs.data or [])]
+
+        conversation_id = None
+        if my_conv_ids:
+            their_conv = supabase.table("conversation_participants") \
+                .select("conversation_id") \
+                .eq("user_id", recipient_id) \
+                .in_("conversation_id", my_conv_ids) \
+                .maybe_single() \
+                .execute()
+
+            if their_conv.data:
+                conversation_id = their_conv.data["conversation_id"]
+
+        # Create new conversation if none exists
+        if not conversation_id:
+            conv = supabase.table("conversations").insert({}).execute()
+            if not conv.data:
+                raise HTTPException(status_code=500, detail="Failed to create conversation")
+            conversation_id = conv.data[0]["id"]
+
+            supabase.table("conversation_participants").insert([
+                {"conversation_id": conversation_id, "user_id": user["id"]},
+                {"conversation_id": conversation_id, "user_id": recipient_id},
+            ]).execute()
+
+        # Insert the message
+        msg = supabase.table("messages").insert({
+            "conversation_id": conversation_id,
+            "sender_id": user["id"],
+            "content": content,
+        }).execute()
+
+        if not msg.data:
+            raise HTTPException(status_code=500, detail="Failed to send message")
+
+        # Update conversation timestamp
+        supabase.table("conversations").update({
+            "updated_at": datetime.utcnow().isoformat()
+        }).eq("id", conversation_id).execute()
+
+        return {
+            "message": "Message sent",
+            "conversationId": conversation_id,
+            "msg": msg.data[0],
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/getMessages")
+def get_messages(payload: Dict[str, str], user: dict = Depends(get_current_user)):
+    conversation_id = payload.get("conversationId")
+    recipient_id = payload.get("recipientId")
+
+    if not conversation_id and not recipient_id:
+        raise HTTPException(status_code=400, detail="Provide conversationId or recipientId")
+
+    try:
+        if not conversation_id and recipient_id:
+            my_convs = supabase.table("conversation_participants") \
+                .select("conversation_id") \
+                .eq("user_id", user["id"]) \
+                .execute()
+
+            my_conv_ids = [c["conversation_id"] for c in (my_convs.data or [])]
+
+            if my_conv_ids:
+                their_conv = supabase.table("conversation_participants") \
+                    .select("conversation_id") \
+                    .eq("user_id", recipient_id) \
+                    .in_("conversation_id", my_conv_ids) \
+                    .maybe_single() \
+                    .execute()
+
+                if their_conv.data:
+                    conversation_id = their_conv.data["conversation_id"]
+
+        if not conversation_id:
+            return []
+
+        messages_res = supabase.table("messages") \
+            .select("id, sender_id, content, created_at") \
+            .eq("conversation_id", conversation_id) \
+            .order("created_at") \
+            .execute()
+
+        return messages_res.data or []
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
