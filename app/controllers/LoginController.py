@@ -28,7 +28,7 @@ router = APIRouter(prefix="/LoginController", tags=["Login"])
 # --------------------------
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = 10080
 
 # --------------------------
 # OAuth2
