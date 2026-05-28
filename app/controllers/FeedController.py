@@ -517,7 +517,20 @@ def connect_people(payload: Dict[str, str], user: dict = Depends(get_current_use
              .eq("people_id", user["id"]) \
              .execute()
 
-            return {"message": "It's a match! You are now connected", "matched": True}
+            # Create conversation and add both participants
+            conv = supabase.table("conversations").insert({}).execute()
+            if conv.data:
+                conversation_id = conv.data[0]["id"]
+                supabase.table("conversation_participants").insert([
+                    {"conversation_id": conversation_id, "user_id": user["id"]},
+                    {"conversation_id": conversation_id, "user_id": people_id},
+                ]).execute()
+
+            return {
+                "message": "It's a match! You are now connected",
+                "matched": True,
+                "conversationId": conv.data[0]["id"] if conv.data else None,
+            }
 
         else:
             # 3. Normal request
