@@ -292,6 +292,23 @@ def get_connections(user: dict = Depends(get_current_user)):
                 for p in (their_parts.data or []):
                     conversation_map[p["user_id"]] = p["conversation_id"]
 
+        # Fetch last message per conversation
+        last_message_map: Dict[str, Dict[str, Any]] = {}
+        if conversation_map:
+            conv_ids = list(set(conversation_map.values()))
+            msgs_res = supabase.table("messages") \
+                .select("id, conversation_id, sender_id, content, created_at") \
+                .in_("conversation_id", conv_ids) \
+                .order("created_at", desc=True) \
+                .execute()
+
+            seen = set()
+            for m in (msgs_res.data or []):
+                cid = m["conversation_id"]
+                if cid not in seen:
+                    seen.add(cid)
+                    last_message_map[cid] = m
+
         query = supabase.table("people").select(
             "*, "
             "people_highlights(highlight), "
@@ -348,6 +365,7 @@ def get_connections(user: dict = Depends(get_current_user)):
                 "details": details,
                 "connected": pid in connected_ids,
                 "conversationId": conversation_map.get(pid),
+                "lastMessage": last_message_map.get(conversation_map.get(pid)),
             })
 
         return result
