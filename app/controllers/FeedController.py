@@ -170,6 +170,26 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
         # Exclude current user
         query = query.neq("id", user["id"])
 
+        # Exclude people with existing interactions
+        interactions = supabase.table("user_people_actions") \
+            .select("user_id, people_id") \
+            .or_(
+                f"user_id.eq.{user['id']},"
+                f"people_id.eq.{user['id']}"
+            ) \
+            .in_("action", ["sent", "connected"]) \
+            .execute()
+
+        excluded_ids = set()
+        for row in (interactions.data or []):
+            if row.get("user_id") == user["id"]:
+                excluded_ids.add(row["people_id"])
+            if row.get("people_id") == user["id"]:
+                excluded_ids.add(row["user_id"])
+
+        if excluded_ids:
+            query = query.not_.in_("id", list(excluded_ids))
+
         # Simple filtering similar to fetchJobs (optional)
         role = filters.get("role")
         experience = filters.get("experience")
