@@ -88,6 +88,7 @@ def get_profile(user: dict = Depends(get_current_user)):
             "experience": p.get("experience"),
             "salary": p.get("salary"),
             "intro": p.get("intro"),
+            "photo": p.get("photo"),
             "highlights": highlights,
             "tags": tags,
             "sections": sections,
@@ -128,6 +129,7 @@ def update_profile(payload: Dict[str, Any], user: dict = Depends(get_current_use
             "experience": payload.get("experience"),
             "salary": payload.get("salary"),
             "intro": payload.get("intro"),
+            "photo": payload.get("photo"),
         }
         scalar_fields = {k: v for k, v in scalar_fields.items() if v is not None}
 
