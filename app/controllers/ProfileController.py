@@ -1,7 +1,9 @@
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 import os
+import requests
+import time
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from typing import List, Dict, Any
@@ -192,5 +194,80 @@ def update_profile(payload: Dict[str, Any], user: dict = Depends(get_current_use
 
         return {"message": "Profile updated successfully"}
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/uploadImage")
+async def upload_image(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    try:
+        auth_token = UploadImageKey()
+        if not auth_token:
+            raise HTTPException(status_code=500, detail="Failed to get upload auth token")
+
+        contents = await file.read()
+
+        response = requests.post(
+            "https://imgbb.com/json",
+            files={"source": (file.filename, contents, file.content_type)},
+            data={
+                "type": "file",
+                "action": "upload",
+                "auth_token": auth_token,
+            },
+            timeout=60,
+        )
+
+        result = response.json()
+
+        if result.get("status_code") != 200:
+            raise HTTPException(status_code=500, detail="Image upload failed")
+
+        return {"url": result["image"]["url"]}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/uploadImage")
+async def upload_image(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    try:
+        auth_token = UploadImageKey()
+        if not auth_token:
+            raise HTTPException(status_code=500, detail="Failed to get upload auth token")
+
+        contents = await file.read()
+
+        timestamp = str(int(time.time() * 1000))
+
+        response = requests.post(
+            "https://imgbb.com/json",
+            data={
+                "type": "file",
+                "action": "upload",
+                "auth_token": auth_token,
+                "timestamp": timestamp,
+            },
+            files={"source": (file.filename, contents, file.content_type)},
+            headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+            },
+            timeout=60,
+        )
+
+        if response.status_code != 200:
+            raise HTTPException(status_code=502, detail="Image upload failed")
+
+        data = response.json()
+
+        if data.get("status_code") != 200:
+            raise HTTPException(status_code=502, detail=data.get("error", {}).get("message", "Upload failed"))
+
+        return {"url": data["image"]["url"]}
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
