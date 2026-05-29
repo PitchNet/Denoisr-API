@@ -7,6 +7,7 @@ import bcrypt
 import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
+from app.services.service import UploadImageKey
 
 # --------------------------
 # Load ENV

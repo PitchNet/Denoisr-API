@@ -5,6 +5,7 @@ import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from typing import List, Dict, Any
+from app.services.service import UploadImageKey
 
 load_dotenv()
 security = HTTPBearer()
