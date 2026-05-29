@@ -57,7 +57,9 @@ def get_profile(user: dict = Depends(get_current_user)):
             "*, "
             "people_highlights(highlight), "
             "people_tags(tag), "
-            "people_sections(id, title, people_section_items(item))"
+            "people_sections(id, title, people_section_items(item)), "
+            "people_work_experience(company, role, duration, description), "
+            "people_projects(name, url, description)"
         ).eq("id", user["id"]).single().execute()
 
         if not person.data:
@@ -87,6 +89,23 @@ def get_profile(user: dict = Depends(get_current_user)):
             "highlights": highlights,
             "tags": tags,
             "sections": sections,
+            "workExperience": [
+                {
+                    "company": we.get("company"),
+                    "role": we.get("role"),
+                    "duration": we.get("duration"),
+                    "description": we.get("description"),
+                }
+                for we in (p.get("people_work_experience") or [])
+            ],
+            "projects": [
+                {
+                    "name": proj.get("name"),
+                    "url": proj.get("url"),
+                    "description": proj.get("description"),
+                }
+                for proj in (p.get("people_projects") or [])
+            ],
         }
 
     except Exception as e:
