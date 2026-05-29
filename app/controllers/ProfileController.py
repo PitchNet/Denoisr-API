@@ -148,6 +148,29 @@ def update_profile(payload: Dict[str, Any], user: dict = Depends(get_current_use
                         {"section_id": section_id, "item": item} for item in items
                     ]).execute()
 
+        # Replace work experience
+        supabase.table("people_work_experience").delete().eq("person_id", person_id).execute()
+        work_experience = payload.get("workExperience") or []
+        for we in work_experience:
+            supabase.table("people_work_experience").insert({
+                "person_id": person_id,
+                "company": we.get("company"),
+                "role": we.get("role"),
+                "duration": we.get("duration"),
+                "description": we.get("description"),
+            }).execute()
+
+        # Replace projects
+        supabase.table("people_projects").delete().eq("person_id", person_id).execute()
+        projects = payload.get("projects") or []
+        for proj in projects:
+            supabase.table("people_projects").insert({
+                "person_id": person_id,
+                "name": proj.get("name"),
+                "url": proj.get("url"),
+                "description": proj.get("description"),
+            }).execute()
+
         return {"message": "Profile updated successfully"}
 
     except Exception as e:
