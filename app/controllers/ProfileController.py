@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 import os
+import uuid
 import requests
 import time
 from dotenv import load_dotenv
@@ -242,6 +243,9 @@ async def upload_image(file: UploadFile = File(...), user: dict = Depends(get_cu
 
         contents = await file.read()
 
+        name, ext = os.path.splitext(file.filename)
+        safe_filename = f"{name}_{uuid.uuid4().hex}{ext}"
+
         timestamp = str(int(time.time() * 1000))
 
         response = requests.post(
@@ -252,7 +256,7 @@ async def upload_image(file: UploadFile = File(...), user: dict = Depends(get_cu
                 "auth_token": auth_token,
                 "timestamp": timestamp,
             },
-            files={"source": (file.filename, contents, file.content_type)},
+            files={"source": (safe_filename, contents, file.content_type)},
             headers={
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
             },
