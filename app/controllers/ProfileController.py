@@ -91,3 +91,64 @@ def get_profile(user: dict = Depends(get_current_user)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/updateProfile")
+def update_profile(payload: Dict[str, Any], user: dict = Depends(get_current_user)):
+    try:
+        person_id = user["id"]
+
+        # Update scalar fields on the people row
+        scalar_fields = {
+            "headline": payload.get("headline"),
+            "subheadline": payload.get("subheadline"),
+            "organization": payload.get("organization"),
+            "location": payload.get("location"),
+            "experience": payload.get("experience"),
+            "salary": payload.get("salary"),
+            "intro": payload.get("intro"),
+        }
+        scalar_fields = {k: v for k, v in scalar_fields.items() if v is not None}
+
+        if scalar_fields:
+            supabase.table("people").update(scalar_fields).eq("id", person_id).execute()
+
+        # Replace highlights
+        supabase.table("people_highlights").delete().eq("person_id", person_id).execute()
+        highlights = payload.get("highlights") or []
+        if highlights:
+            supabase.table("people_highlights").insert([
+                {"person_id": person_id, "highlight": h} for h in highlights
+            ]).execute()
+
+        # Replace tags
+        supabase.table("people_tags").delete().eq("person_id", person_id).execute()
+        tags = payload.get("tags") or []
+        if tags:
+            supabase.table("people_tags").insert([
+                {"person_id": person_id, "tag": t} for t in tags
+            ]).execute()
+
+        # Replace sections + items
+        existing_sections = supabase.table("people_sections").select("id").eq("person_id", person_id).execute()
+        for sec in (existing_sections.data or []):
+            supabase.table("people_section_items").delete().eq("section_id", sec["id"]).execute()
+        supabase.table("people_sections").delete().eq("person_id", person_id).execute()
+
+        sections = payload.get("sections") or []
+        for section in sections:
+            section_insert = supabase.table("people_sections").insert({
+                "person_id": person_id, "title": section.get("title")
+            }).execute()
+            if section_insert.data:
+                section_id = section_insert.data[0]["id"]
+                items = section.get("items") or []
+                if items:
+                    supabase.table("people_section_items").insert([
+                        {"section_id": section_id, "item": item} for item in items
+                    ]).execute()
+
+        return {"message": "Profile updated successfully"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
