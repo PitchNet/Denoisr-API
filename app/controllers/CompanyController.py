@@ -82,3 +82,36 @@ def company_details(payload: Dict[str, Any], user: dict = Depends(get_current_us
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/getCompany")
+def get_company(user: dict = Depends(get_current_user)):
+    try:
+        company_id = user.get("companyId")
+        if not company_id:
+            return {"company": None}
+
+        company = supabase.table("companies").select("*").eq("id", company_id).single().execute()
+
+        if not company.data:
+            return {"company": None}
+
+        c = company.data
+
+        return {
+            "company": {
+                "name": c.get("name"),
+                "photo": c.get("photo"),
+                "website": c.get("website"),
+                "size": c.get("size"),
+                "address": c.get("address"),
+                "description": c.get("description"),
+                "phone": c.get("phone"),
+                "yearFounded": c.get("year_founded"),
+                "tags": c.get("tags") or [],
+                "commitments": c.get("commitments"),
+            }
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
