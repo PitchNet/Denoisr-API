@@ -264,14 +264,19 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
 @router.get("/getConnections", response_model=List[Dict[str, Any]])
 def get_connections(user: dict = Depends(get_current_user)):
     try:
-        # Fetch connected person IDs for the current user
+        # Fetch connected person IDs and their connection timestamps
         connected_res = supabase.table("user_people_actions") \
-            .select("people_id") \
+            .select("people_id, created_at") \
             .eq("user_id", user["id"]) \
             .eq("action", "connected") \
             .execute()
 
-        connected_ids = {c["people_id"] for c in (connected_res.data or [])}
+        connected_ids = set()
+        connected_at_map: Dict[str, str] = {}
+        for c in (connected_res.data or []):
+            pid = c["people_id"]
+            connected_ids.add(pid)
+            connected_at_map[pid] = c.get("created_at")
 
         # Build map of person_id -> conversation_id
         conversation_map: Dict[str, str] = {}
@@ -369,6 +374,11 @@ def get_connections(user: dict = Depends(get_current_user)):
                 "conversationId": conversation_map.get(pid),
                 "lastMessage": last_message_map.get(conversation_map.get(pid)),
             })
+
+        # Sort by recent activity: last message time, then connection time
+        result.sort(key=lambda r: (
+            r["lastMessage"]["created_at"] if r.get("lastMessage") else connected_at_map.get(r["id"], ""),
+        ), reverse=True)
 
         return result
 
