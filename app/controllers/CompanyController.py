@@ -63,7 +63,7 @@ def company_details(payload: Dict[str, Any], user: dict = Depends(get_current_us
             "address": payload.get("address"),
             "description": payload.get("description"),
             "phone": payload.get("phone"),
-            "yearFounded": payload.get("yearFounded"),
+            "year_founded": payload.get("yearFounded"),
             "tags": payload.get("tags"),
             "commitments": payload.get("commitments"),
         }
