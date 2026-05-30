@@ -87,7 +87,7 @@ def company_details(payload: Dict[str, Any], user: dict = Depends(get_current_us
 @router.get("/getCompany")
 def get_company(user: dict = Depends(get_current_user)):
     try:
-        company_id = user.get("companyId")
+        company_id = user.get("companyid")
         if not company_id:
             return {"company": None}
 
