@@ -90,6 +90,7 @@ def get_profile(user: dict = Depends(get_current_user)):
             "salary": p.get("salary"),
             "intro": p.get("intro"),
             "photo": p.get("photo"),
+            "companyId": p.get("companyId"),
             "highlights": highlights,
             "tags": tags,
             "sections": sections,
