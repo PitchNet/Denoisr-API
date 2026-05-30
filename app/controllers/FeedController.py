@@ -515,6 +515,63 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/jobApplications")
+def job_applications(user: dict = Depends(get_current_user)):
+    try:
+        actions_res = supabase.table("user_job_actions") \
+            .select("job_id") \
+            .eq("user_id", user["id"]) \
+            .execute()
+
+        job_ids = [a["job_id"] for a in (actions_res.data or [])]
+
+        if not job_ids:
+            return []
+
+        jobs_res = supabase.table("jobs").select("""
+            *,
+            job_highlights(highlight),
+            job_tags(tag),
+            job_sections(id, title, job_section_items(item))
+        """).in_("id", job_ids).execute()
+
+        jobs = jobs_res.data or []
+
+        result = []
+        for job in jobs:
+            result.append({
+                "id": job["id"],
+                "kind": "jobs",
+                "headline": job.get("headline"),
+                "subheadline": job.get("subheadline"),
+                "organization": job.get("organization"),
+                "location": job.get("location"),
+                "experience": job.get("experience"),
+                "salary": job.get("salary"),
+                "intro": job.get("intro"),
+                "highlights": [
+                    h["highlight"] for h in job.get("job_highlights", [])
+                ],
+                "tags": [
+                    t["tag"] for t in job.get("job_tags", [])
+                ],
+                "sections": [
+                    {
+                        "title": s["title"],
+                        "items": [
+                            i["item"] for i in s.get("job_section_items", [])
+                        ]
+                    }
+                    for s in job.get("job_sections", [])
+                ]
+            })
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/jobAction")
 def accept_job(payload: Dict[str, str], user: str = Depends(get_current_user)):
 
