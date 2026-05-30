@@ -77,7 +77,7 @@ def company_details(payload: Dict[str, Any], user: dict = Depends(get_current_us
                 raise HTTPException(status_code=500, detail="Company creation failed")
             company_id = insert.data[0]["id"]
 
-        supabase.table("people").update({"companyId": company_id}).eq("id", user["id"]).execute()
+        supabase.table("people").update({"companyid": company_id}).eq("id", user["id"]).execute()
         return {"message": "Company saved", "companyId": company_id}
 
     except Exception as e:
