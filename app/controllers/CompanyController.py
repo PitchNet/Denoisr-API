@@ -124,11 +124,15 @@ def job_details(payload: Dict[str, Any], user: dict = Depends(get_current_user))
         if not company_id:
             raise HTTPException(status_code=400, detail="No company associated with this user")
 
+        # Fetch company name for subheadline
+        company_res = supabase.table("companies").select("name").eq("id", company_id).single().execute()
+        company_name = company_res.data.get("name") if company_res.data else None
+
         job_id = payload.get("id")
 
         job_payload = {
             "headline": payload.get("headline"),
-            "subheadline": payload.get("subheadline"),
+            "subheadline": company_name,
             "organization": payload.get("organization"),
             "location": payload.get("location"),
             "experience": payload.get("experience"),
