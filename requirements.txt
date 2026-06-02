@@ -6,4 +6,5 @@ supabase
 python-dotenv
 email-validator
 python-multipart
+google-genai
 apify_client
