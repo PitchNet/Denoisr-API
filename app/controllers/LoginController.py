@@ -5,9 +5,14 @@ from jose import jwt, JWTError
 from datetime import datetime, timedelta
 import bcrypt
 import os
+import json
+import re
 from dotenv import load_dotenv
 from supabase import create_client, Client
+from typing import Dict, Any
 from app.services.service import UploadImageKey
+from apify_client import ApifyClient
+from google import genai
 
 # --------------------------
 # Load ENV
@@ -16,6 +21,8 @@ load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+APIFY_TOKEN = os.getenv("APIFY_TOKEN")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -252,3 +259,76 @@ def profile(current_user: dict = Depends(get_current_user)):
 @router.get("/keepAlive")
 def keepAlive():
     return ("Hi!")
+
+
+@router.post("/linkedinImport")
+def linkedin_import(payload: Dict[str, Any]):
+    try:
+        url = payload.get("url")
+        if not url:
+            raise HTTPException(status_code=400, detail="LinkedIn URL is required")
+
+        if not APIFY_TOKEN:
+            raise HTTPException(status_code=500, detail="APIFY_TOKEN not configured")
+        if not GOOGLE_API_KEY:
+            raise HTTPException(status_code=500, detail="GOOGLE_API_KEY not configured")
+
+        # Step 1: Scrape LinkedIn via Apify
+        apify = ApifyClient(APIFY_TOKEN)
+
+        run_input = {
+            "profileScraperMode": "Profile details no email ($4 per 1k)",
+            "queries": [url],
+        }
+
+        run = apify.actor("LpVuK3Zozwuipa5bp").call(run_input=run_input)
+
+        linkedin_data = []
+        for item in apify.dataset(run.default_dataset_id).iterate_items():
+            linkedin_data.append(item)
+
+        # Step 2: Ask Gemma to restructure into signup format
+        prompt = f"""You are given LinkedIn profile data. Restructure it into the exact JSON format shown below. Do not include any text outside the JSON. Return ONLY valid JSON.
+
+Example output:
+{{
+  "headline": "Aanya Mehta",
+  "subheadline": "Frontend Engineer",
+  "organization": "Proof-led builder with marketplace and fintech experience",
+  "location": "Bengaluru, India",
+  "experience": 5,
+  "salary": 80,
+  "intro": "Built complex React platforms used by operations teams to make faster decisions with less dashboard noise.",
+  "highlights": ["React", "TypeScript", "Design systems"],
+  "tags": ["Open to roles", "Remote", "Available in 30 days"],
+  "sections": [
+    {{"title": "Proof of work", "items": ["Redesigned internal review workflows and cut task time by 38%.", "Built a reusable component system used across three product teams."]}},
+    {{"title": "Intent and fit", "items": ["Prefers product teams with clear ownership and measurable outcomes.", "Strong fit for structured hiring, workflow SaaS, and trust-heavy products."]}}
+  ],
+  "workExperience": [
+    {{"company": "Example Corp", "role": "Frontend Engineer", "duration": "Jan 2020 - Present", "description": "Built and maintained scalable UI systems."}}
+  ],
+  "projects": [],
+  "photo": ""
+}}
+
+Now restructure this LinkedIn data:
+{linkedin_data}"""
+
+        gemini_client = genai.Client(api_key=GOOGLE_API_KEY)
+        response = gemini_client.models.generate_content(
+            model="gemma-4-31b-it",
+            contents=prompt,
+        )
+
+        text = response.text.strip()
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+        result = json.loads(text)
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
