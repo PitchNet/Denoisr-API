@@ -50,6 +50,17 @@ class SectionModel(BaseModel):
     title: str
     items: list[str] = []
 
+class WorkExperienceModel(BaseModel):
+    company: str | None = None
+    role: str | None = None
+    duration: str | None = None
+    description: str | None = None
+
+class ProjectModel(BaseModel):
+    name: str | None = None
+    link: str | None = None
+    description: str | None = None
+
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
@@ -62,11 +73,12 @@ class UserCreate(BaseModel):
     experience: int | None = None
     salary: int | None = None
     intro: str | None = None
+    photo: str | None = None
     highlights: list[str] = []
     tags: list[str] = []
     sections: list[SectionModel] = []
-    organization: str | None = None
-    intro: str | None = None
+    workExperience: list[WorkExperienceModel] = []
+    projects: list[ProjectModel] = []
 
 
 class LoginRequest(BaseModel):
@@ -168,7 +180,8 @@ def signup(user: UserCreate):
         "currentrole": user.currentRole,
         "introduction": user.intro,
         "name": user.name,
-        "experience": user.experience
+        "experience": user.experience,
+        "photo": user.photo
     }
 
     insert = supabase.table("people").insert(user_payload).execute()
@@ -214,6 +227,27 @@ def signup(user: UserCreate):
                 {"section_id": section_id, "item": item}
                 for item in items
             ]).execute()
+
+    # 7. Work experience
+    work_experience = user.workExperience or []
+    for we in work_experience:
+        supabase.table("people_work_experience").insert({
+            "person_id": person_id,
+            "company": we.company,
+            "role": we.role,
+            "duration": we.duration,
+            "description": we.description,
+        }).execute()
+
+    # 8. Projects
+    projects = user.projects or []
+    for proj in projects:
+        supabase.table("people_projects").insert({
+            "person_id": person_id,
+            "name": proj.name,
+            "url": proj.link,
+            "description": proj.description,
+        }).execute()
 
     token_sub = person_id if person_id else user_id
     token = create_access_token({"sub": token_sub})
