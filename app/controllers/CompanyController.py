@@ -360,3 +360,32 @@ def job_applicants(payload: Dict[str, Any], user: dict = Depends(get_current_use
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/jobApplicantCounts")
+def job_applicant_counts(user: dict = Depends(get_current_user)):
+    try:
+        company_id = user.get("companyid")
+        if not company_id:
+            return []
+
+        jobs = supabase.table("jobs").select("id").eq("company_id", company_id).execute()
+        job_ids = [j["id"] for j in (jobs.data or [])]
+        if not job_ids:
+            return []
+
+        actions = supabase.table("user_job_actions") \
+            .select("job_id") \
+            .in_("job_id", job_ids) \
+            .eq("action", "accepted") \
+            .execute()
+
+        counts: Dict[str, int] = {}
+        for a in (actions.data or []):
+            jid = a["job_id"]
+            counts[jid] = counts.get(jid, 0) + 1
+
+        return [{"jobId": jid, "count": counts.get(jid, 0)} for jid in job_ids]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
