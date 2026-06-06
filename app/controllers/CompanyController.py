@@ -280,7 +280,7 @@ def job_applicants(payload: Dict[str, Any], user: dict = Depends(get_current_use
             raise HTTPException(status_code=400, detail="jobId required")
 
         actions = supabase.table("user_job_actions") \
-            .select("user_id, created_at") \
+            .select("user_id, created_at, status") \
             .eq("job_id", job_id) \
             .eq("action", "accepted") \
             .execute()
@@ -290,6 +290,7 @@ def job_applicants(payload: Dict[str, Any], user: dict = Depends(get_current_use
 
         user_ids = [a["user_id"] for a in actions.data]
         created_map = {a["user_id"]: a.get("created_at", "") for a in actions.data}
+        status_map = {a["user_id"]: a.get("status", "new") for a in actions.data}
 
         people = supabase.table("people").select(
             "*, "
@@ -352,8 +353,7 @@ def job_applicants(payload: Dict[str, Any], user: dict = Depends(get_current_use
                 "workExperience": work_experience,
                 "projects": projects,
                 "appliedDate": _relative_time(created_map.get(uid, "")),
-                "status": "new",
-                "notes": "",
+                "status": status_map.get(uid, "new")
             })
 
         return result
@@ -387,5 +387,32 @@ def job_applicant_counts(user: dict = Depends(get_current_user)):
 
         return [{"jobId": jid, "count": counts.get(jid, 0)} for jid in job_ids]
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/jobApplicantStatus")
+def job_applicant_status(payload: Dict[str, Any], user: dict = Depends(get_current_user)):
+    try:
+        job_id = payload.get("jobId")
+        person_id = payload.get("personId")
+        status = payload.get("status")
+
+        if not job_id or not person_id or not status:
+            raise HTTPException(status_code=400, detail="jobId, personId, and status required")
+
+        update: Dict[str, Any] = {"status": status}
+
+        supabase.table("user_job_actions") \
+            .update(update) \
+            .eq("job_id", job_id) \
+            .eq("user_id", person_id) \
+            .eq("action", "accepted") \
+            .execute()
+
+        return {"message": "Status updated"}
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
