@@ -170,32 +170,43 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
         # Exclude current user
         query = query.neq("id", user["id"])
 
-        # Exclude people with existing interactions
-        interactions = supabase.table("user_people_actions") \
-            .select("user_id, people_id") \
-            .or_(
-                f"user_id.eq.{user['id']},"
-                f"people_id.eq.{user['id']}"
-            ) \
-            .in_("action", ["sent", "connected"]) \
-            .execute()
-
-        excluded_ids = set()
-        for row in (interactions.data or []):
-            if row.get("user_id") == user["id"]:
-                excluded_ids.add(row["people_id"])
-            if row.get("people_id") == user["id"]:
-                excluded_ids.add(row["user_id"])
-
-        if excluded_ids:
-            query = query.not_.in_("id", list(excluded_ids))
-
-        # Simple filtering similar to fetchJobs (optional)
         role = filters.get("role")
         experience = filters.get("experience")
         country = filters.get("country")
         city = filters.get("city")
         salary = filters.get("salary")
+
+        bookmarked = filters.get("bookmarked")
+
+        if bookmarked:
+            bookmark_res = supabase.table("user_people_actions") \
+                .select("people_id") \
+                .eq("user_id", user["id"]) \
+                .eq("action", "bookmark") \
+                .execute()
+            bookmark_ids = [b["people_id"] for b in (bookmark_res.data or [])]
+            if not bookmark_ids:
+                return []
+            query = query.in_("id", bookmark_ids)
+        else:
+            interactions = supabase.table("user_people_actions") \
+                .select("user_id, people_id") \
+                .or_(
+                    f"user_id.eq.{user['id']},"
+                    f"people_id.eq.{user['id']}"
+                ) \
+                .in_("action", ["sent", "connected"]) \
+                .execute()
+
+            excluded_ids = set()
+            for row in (interactions.data or []):
+                if row.get("user_id") == user["id"]:
+                    excluded_ids.add(row["people_id"])
+                if row.get("people_id") == user["id"]:
+                    excluded_ids.add(row["user_id"])
+
+            if excluded_ids:
+                query = query.not_.in_("id", list(excluded_ids))
 
         if role:
             query = query.or_(
@@ -222,7 +233,6 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
 
         people_res = query.execute()
         people = people_res.data or []
-
         result: List[Dict[str, Any]] = []
 
         for p in people:
@@ -410,17 +420,26 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
         country = filters.get("country")
         city = filters.get("city")
         salary = filters.get("salary")
-        
-        accepted_job_ids = []
+        bookmarked = filters.get("bookmarked")
 
-        if user: 
+        accepted_job_ids = []
+        bookmark_ids = []
+
+        if user:
             accepted_res = supabase.table("user_job_actions") \
                 .select("job_id") \
                 .eq("user_id", user["id"]) \
                 .eq("action", "accepted") \
                 .execute()
-
             accepted_job_ids = [a["job_id"] for a in (accepted_res.data or [])]
+
+            if bookmarked:
+                bookmark_res = supabase.table("user_job_actions") \
+                    .select("job_id") \
+                    .eq("user_id", user["id"]) \
+                    .eq("action", "bookmark") \
+                    .execute()
+                bookmark_ids = [b["job_id"] for b in (bookmark_res.data or [])]
         # --------------------------
         # 2. Filtering logic
         # --------------------------
@@ -463,6 +482,12 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
         # Exclude accepted jobs
         if accepted_job_ids:
             query = query.not_.in_("id", accepted_job_ids)
+
+        # Filter to bookmarked only
+        if bookmarked:
+            if not bookmark_ids:
+                return []
+            query = query.in_("id", bookmark_ids)
 
         # --------------------------
         # 3. Fetch jobs
@@ -580,6 +605,7 @@ def job_applications(user: dict = Depends(get_current_user)):
 def accept_job(payload: Dict[str, str], user: str = Depends(get_current_user)):
 
     job_id = payload.get("jobId")
+    action = payload.get("action", "accepted")
 
     if not user or not job_id:
         raise HTTPException(status_code=400, detail="Missing fields")
@@ -588,10 +614,10 @@ def accept_job(payload: Dict[str, str], user: str = Depends(get_current_user)):
         supabase.table("user_job_actions").upsert({
             "user_id": user["id"],
             "job_id": job_id,
-            "action": "accepted"
+            "action": action,
         }).execute()
 
-        return {"message": "Job accepted"}
+        return {"message": "Job action recorded"}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -600,11 +626,21 @@ def accept_job(payload: Dict[str, str], user: str = Depends(get_current_user)):
 def connect_people(payload: Dict[str, str], user: dict = Depends(get_current_user)):
 
     people_id = payload.get("peopleId")
+    action = payload.get("action", "accepted")
 
     if not user or not people_id:
         raise HTTPException(status_code=400, detail="Missing fields")
 
     try:
+        # Non-standard actions (e.g. bookmark) just upsert and return
+        if action != "accepted":
+            supabase.table("user_people_actions").upsert({
+                "user_id": user["id"],
+                "people_id": people_id,
+                "action": action,
+            }).execute()
+            return {"message": "Action recorded"}
+
         # 1. Check if the other person already sent a request to me
         reverse_res = supabase.table("user_people_actions") \
             .select("*") \
