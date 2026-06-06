@@ -521,11 +521,12 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
 def job_applications(user: dict = Depends(get_current_user)):
     try:
         actions_res = supabase.table("user_job_actions") \
-            .select("job_id") \
+            .select("job_id, status") \
             .eq("user_id", user["id"]) \
             .execute()
 
         job_ids = [a["job_id"] for a in (actions_res.data or [])]
+        status_map = {a["job_id"]: a.get("status", "new") for a in (actions_res.data or [])}
 
         if not job_ids:
             return []
@@ -544,6 +545,7 @@ def job_applications(user: dict = Depends(get_current_user)):
             result.append({
                 "id": job["id"],
                 "kind": "jobs",
+                "status": status_map.get(job["id"], "new"),
                 "headline": job.get("headline"),
                 "subheadline": job.get("subheadline"),
                 "organization": job.get("organization"),
