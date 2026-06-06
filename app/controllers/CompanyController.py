@@ -5,7 +5,7 @@ import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from typing import List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 load_dotenv()
 security = HTTPBearer()
@@ -234,6 +234,126 @@ def company_jobs(user: dict = Depends(get_current_user)):
                     }
                     for s in job.get("job_sections", [])
                 ]
+            })
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _relative_time(dt_str: str) -> str:
+    if not dt_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        diff = now - dt
+        days = diff.days
+        if days < 1:
+            hours = int(diff.total_seconds() // 3600)
+            if hours < 1:
+                minutes = int(diff.total_seconds() // 60)
+                return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+            return f"{hours} hour{'s' if hours != 1 else ''} ago"
+        if days == 1:
+            return "1 day ago"
+        if days < 7:
+            return f"{days} days ago"
+        if days < 30:
+            weeks = days // 7
+            return f"{weeks} week{'s' if weeks != 1 else ''} ago"
+        if days < 365:
+            months = days // 30
+            return f"{months} month{'s' if months != 1 else ''} ago"
+        years = days // 365
+        return f"{years} year{'s' if years != 1 else ''} ago"
+    except Exception:
+        return dt_str or ""
+
+
+@router.post("/jobApplicants")
+def job_applicants(payload: Dict[str, Any], user: dict = Depends(get_current_user)):
+    try:
+        job_id = payload.get("jobId")
+        if not job_id:
+            raise HTTPException(status_code=400, detail="jobId required")
+
+        actions = supabase.table("user_job_actions") \
+            .select("user_id, created_at") \
+            .eq("job_id", job_id) \
+            .eq("action", "accepted") \
+            .execute()
+
+        if not actions.data:
+            return []
+
+        user_ids = [a["user_id"] for a in actions.data]
+        created_map = {a["user_id"]: a.get("created_at", "") for a in actions.data}
+
+        people = supabase.table("people").select(
+            "*, "
+            "people_highlights(highlight), "
+            "people_tags(tag), "
+            "people_sections(id, title, people_section_items(item)), "
+            "people_work_experience(company, role, duration, description), "
+            "people_projects(name, url, description)"
+        ).in_("id", user_ids).execute()
+
+        people_map = {p["id"]: p for p in (people.data or [])}
+
+        result = []
+        for uid in user_ids:
+            p = people_map.get(uid)
+            if not p:
+                continue
+
+            highlights = [h["highlight"] for h in p.get("people_highlights", []) if "highlight" in h]
+            tags = [t["tag"] for t in p.get("people_tags", []) if "tag" in t]
+
+            sections_raw = p.get("people_sections", [])
+            sections = []
+            for sec in sections_raw:
+                items = [it["item"] for it in sec.get("people_section_items", []) if "item" in it]
+                sections.append({"title": sec["title"], "items": items})
+
+            work_experience = [
+                {
+                    "company": we.get("company"),
+                    "role": we.get("role"),
+                    "duration": we.get("duration"),
+                    "description": we.get("description"),
+                }
+                for we in (p.get("people_work_experience") or [])
+            ]
+
+            projects = [
+                {
+                    "name": proj.get("name"),
+                    "url": proj.get("url"),
+                    "description": proj.get("description"),
+                }
+                for proj in (p.get("people_projects") or [])
+            ]
+
+            result.append({
+                "id": p["id"],
+                "name": p.get("headline") or p.get("name"),
+                "role": p.get("subheadline"),
+                "org": p.get("organization"),
+                "location": p.get("location"),
+                "experience": p.get("experience"),
+                "salary": p.get("salary"),
+                "intro": p.get("intro"),
+                "photo": p.get("photo") or "",
+                "highlights": highlights,
+                "tags": tags,
+                "sections": sections,
+                "workExperience": work_experience,
+                "projects": projects,
+                "appliedDate": _relative_time(created_map.get(uid, "")),
+                "status": "new",
+                "notes": "",
             })
 
         return result
