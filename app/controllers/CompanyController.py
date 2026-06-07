@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 from typing import List, Dict, Any
 from datetime import datetime, timezone
+from app.controllers.NotificationController import send_push
 
 load_dotenv()
 security = HTTPBearer()
@@ -409,6 +410,21 @@ def job_applicant_status(payload: Dict[str, Any], user: dict = Depends(get_curre
             .eq("user_id", person_id) \
             .eq("action", "accepted") \
             .execute()
+
+        status_labels = {
+            "new": "New", "submitted": "Submitted", "reviewing": "Reviewing",
+            "shortlisted": "Shortlisted", "messaged": "Messaged",
+            "hired": "Hired", "passed": "Rejected",
+        }
+        job_res = supabase.table("jobs").select("headline").eq("id", job_id).single().execute()
+        job_title = job_res.data.get("headline", "a position") if job_res.data else "a position"
+        label = status_labels.get(status, status)
+        send_push(
+            person_id,
+            "Application update",
+            f"Your application for {job_title} is now {label}.",
+            {"type": "job_status", "jobId": job_id},
+        )
 
         return {"message": "Status updated"}
 

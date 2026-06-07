@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 from typing import List, Dict, Any
 from collections import defaultdict
+from app.controllers.NotificationController import send_push
 # --------------------------
 # Load ENV
 # --------------------------
@@ -673,6 +674,23 @@ def connect_people(payload: Dict[str, str], user: dict = Depends(get_current_use
                     {"conversation_id": conversation_id, "user_id": people_id},
                 ]).execute()
 
+            other_person = supabase.table("people").select("headline, name").eq("id", people_id).single().execute()
+            other_name = other_person.data.get("headline") or other_person.data.get("name") or "Someone" if other_person.data else "Someone"
+            my_name = user.get("headline") or user.get("name") or "Someone"
+
+            send_push(
+                people_id,
+                f"You connected with {my_name}",
+                "Start a conversation and see where it goes.",
+                {"type": "connection", "peopleId": user["id"]},
+            )
+            send_push(
+                user["id"],
+                f"You connected with {other_name}",
+                "Start a conversation and see where it goes.",
+                {"type": "connection", "peopleId": people_id},
+            )
+
             return {
                 "message": "It's a match! You are now connected",
                 "matched": True,
@@ -810,6 +828,15 @@ def send_message(payload: Dict[str, str], user: dict = Depends(get_current_user)
         supabase.table("conversations").update({
             "updated_at": datetime.utcnow().isoformat()
         }).eq("id", conversation_id).execute()
+
+        sender_name = user.get("headline") or user.get("name") or "Someone"
+        content_preview = (content[:120] + "…") if len(content) > 120 else content
+        send_push(
+            recipient_id,
+            sender_name,
+            content_preview,
+            {"type": "message", "conversationId": conversation_id},
+        )
 
         return {
             "message": "Message sent",

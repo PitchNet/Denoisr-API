@@ -8,3 +8,4 @@ email-validator
 python-multipart
 google-genai
 apify_client
+pywebpush
