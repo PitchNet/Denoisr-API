@@ -9,3 +9,5 @@ python-multipart
 google-genai
 apify_client
 pywebpush
+py_vapid>=1.9.0
+ecdsa>=0.18
