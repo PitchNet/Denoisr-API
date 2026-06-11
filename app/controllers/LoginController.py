@@ -318,8 +318,11 @@ def linkedin_import(payload: Dict[str, Any]):
         run = apify.actor("LpVuK3Zozwuipa5bp").call(run_input=run_input)
 
         linkedin_data = []
+        profile_picture = None
         for item in apify.dataset(run.default_dataset_id).iterate_items():
             linkedin_data.append(item)
+            if not profile_picture:
+                profile_picture = item.get("profilePicture") or item.get("profilePic") or item.get("photo")
 
         # Step 2: Ask Gemma to restructure into signup format
         prompt = f"""You are given LinkedIn profile data. Restructure it into the exact JSON format shown below. Do not include any text outside the JSON. Return ONLY valid JSON.
@@ -359,6 +362,9 @@ Now restructure this LinkedIn data:
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
         result = json.loads(text)
+
+        if profile_picture and not result.get("photo"):
+            result["photo"] = profile_picture
 
         return result
 
