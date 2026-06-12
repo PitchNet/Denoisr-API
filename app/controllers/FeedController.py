@@ -177,6 +177,7 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
         salary = filters.get("salary")
 
         bookmarked = filters.get("bookmarked")
+        search = filters.get("search")
 
         if bookmarked:
             bookmark_res = supabase.table("user_people_actions") \
@@ -207,6 +208,39 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
 
             if excluded_ids:
                 query = query.not_.in_("id", list(excluded_ids))
+
+        # Search → broad match across main fields + related tables
+        if search and search.strip():
+            q = search.strip()
+            search_ids = set()
+
+            main_res = supabase.table("people").select("id").or_(
+                f"headline.ilike.%{q}%,"
+                f"subheadline.ilike.%{q}%,"
+                f"organization.ilike.%{q}%,"
+                f"location.ilike.%{q}%"
+            ).execute()
+            for r in (main_res.data or []):
+                search_ids.add(r["id"])
+
+            hl_res = supabase.table("people_highlights").select("people_id").ilike("highlight", f"%{q}%").execute()
+            for r in (hl_res.data or []):
+                search_ids.add(r["people_id"])
+
+            tag_res = supabase.table("people_tags").select("people_id").ilike("tag", f"%{q}%").execute()
+            for r in (tag_res.data or []):
+                search_ids.add(r["people_id"])
+
+            item_res = supabase.table("people_section_items").select("section_id").ilike("item", f"%{q}%").execute()
+            sec_ids_with_match = [r["section_id"] for r in (item_res.data or [])]
+            if sec_ids_with_match:
+                sec_res = supabase.table("people_sections").select("person_id").in_("id", sec_ids_with_match).execute()
+                for r in (sec_res.data or []):
+                    search_ids.add(r["people_id"])
+
+            if not search_ids:
+                return []
+            query = query.in_("id", list(search_ids))
 
         if role:
             query = query.or_(
@@ -421,6 +455,7 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
         city = filters.get("city")
         salary = filters.get("salary")
         bookmarked = filters.get("bookmarked")
+        search = filters.get("search")
 
         accepted_job_ids = []
         bookmark_ids = []
@@ -443,6 +478,39 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
         # --------------------------
         # 2. Filtering logic
         # --------------------------
+
+        # Search → broad match across main fields + related tables
+        if search and search.strip():
+            q = search.strip()
+            search_ids = set()
+
+            main_res = supabase.table("jobs").select("id").or_(
+                f"headline.ilike.%{q}%,"
+                f"subheadline.ilike.%{q}%,"
+                f"organization.ilike.%{q}%,"
+                f"location.ilike.%{q}%"
+            ).execute()
+            for r in (main_res.data or []):
+                search_ids.add(r["id"])
+
+            hl_res = supabase.table("job_highlights").select("job_id").ilike("highlight", f"%{q}%").execute()
+            for r in (hl_res.data or []):
+                search_ids.add(r["job_id"])
+
+            tag_res = supabase.table("job_tags").select("job_id").ilike("tag", f"%{q}%").execute()
+            for r in (tag_res.data or []):
+                search_ids.add(r["job_id"])
+
+            item_res = supabase.table("job_section_items").select("section_id").ilike("item", f"%{q}%").execute()
+            sec_ids_with_match = [r["section_id"] for r in (item_res.data or [])]
+            if sec_ids_with_match:
+                sec_res = supabase.table("job_sections").select("job_id").in_("id", sec_ids_with_match).execute()
+                for r in (sec_res.data or []):
+                    search_ids.add(r["job_id"])
+
+            if not search_ids:
+                return []
+            query = query.in_("id", list(search_ids))
 
         # Role → search in headline + subheadline + intro
         if role:
