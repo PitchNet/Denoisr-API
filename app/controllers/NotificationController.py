@@ -33,8 +33,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         if not subject:
             raise HTTPException(status_code=401, detail="Invalid token: subject missing")
         user = supabase.table("people").select("*").eq("id", subject).single().execute()
-        if not user.data:
-            user = supabase.table("people").select("*").eq("id", subject).single().execute()
+
         if not user.data:
             raise HTTPException(status_code=401, detail="User not found")
         return user.data

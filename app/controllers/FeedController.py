@@ -50,11 +50,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
                 detail="Invalid token: subject missing"
             )
 
-        # Try to fetch by emailaddress first
         user = supabase.table("people").select("*").eq("id", subject).single().execute()
-        if not user.data:
-            # Fallback: try by id
-            user = supabase.table("people").select("*").eq("id", subject).single().execute()
 
         if not user.data:
             raise HTTPException(status_code=401, detail="User not found")
@@ -97,7 +93,8 @@ def insert_jobs(jobs: List[Dict[str, Any]]):
             )
 
             if not job_insert.data:
-                raise HTTPException(status_code=500, detail="Job insert failed")
+                err = (job_insert.error or {}).get("message", "unknown")
+                raise HTTPException(status_code=500, detail=f"insert_jobs: insert failed — {err}")
 
             job_id = job_insert.data[0]["id"]  # ✅ correct UUID source
 
@@ -138,10 +135,12 @@ def insert_jobs(jobs: List[Dict[str, Any]]):
                 )
 
                 if not section_insert.data:
-                    raise HTTPException(status_code=500, detail="Section insert failed")
+                    err = (section_insert.error or {}).get("message", "unknown")
+                    raise HTTPException(status_code=500, detail=f"insert_jobs: section insert failed — {err}")
 
                 section_id = section_insert.data[0]["id"]
 
+                # 4. Items
                 items = section.get("items") or []
                 if items:
                     supabase.table("job_section_items").insert([
@@ -152,7 +151,7 @@ def insert_jobs(jobs: List[Dict[str, Any]]):
         return {"message": "Jobs inserted successfully"}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"insert_jobs: {type(e).__name__}: {e}")
 
 
 @router.post("/fetchPeople", response_model=List[Dict[str, Any]])
@@ -269,7 +268,7 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
         return result
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"fetch_people: {type(e).__name__}: {e}")
 
 
 @router.get("/getConnections", response_model=List[Dict[str, Any]])
@@ -394,7 +393,7 @@ def get_connections(user: dict = Depends(get_current_user)):
         return result
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"get_connections: {type(e).__name__}: {e}")
 
 
 @router.post("/fetchJobs", response_model=List[Dict[str, Any]])
@@ -540,7 +539,7 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
         return result
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"fetch_jobs: {type(e).__name__}: {e}")
 
 
 @router.get("/jobApplications")
@@ -599,7 +598,7 @@ def job_applications(user: dict = Depends(get_current_user)):
         return result
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"job_applications: {type(e).__name__}: {e}")
 
 
 @router.post("/jobAction")
@@ -621,7 +620,7 @@ def accept_job(payload: Dict[str, str], user: str = Depends(get_current_user)):
         return {"message": "Job action recorded"}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"job_action: {type(e).__name__}: {e}")
 
 @router.post("/peopleAction")
 def connect_people(payload: Dict[str, str], user: dict = Depends(get_current_user)):
@@ -708,7 +707,7 @@ def connect_people(payload: Dict[str, str], user: dict = Depends(get_current_use
             return {"message": "Connection request sent", "matched": False}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"people_action: {type(e).__name__}: {e}")
 
 
 @router.post("/InsertPeople", status_code=201)
@@ -730,7 +729,8 @@ def insert_people(people: List[Dict[str, Any]]):
             )
 
             if not person_insert.data:
-                raise HTTPException(status_code=500, detail="Person insert failed")
+                err = (person_insert.error or {}).get("message", "unknown")
+                raise HTTPException(status_code=500, detail=f"insert_people: insert failed — {err}")
 
             person_id = person_insert.data[0]["id"]
 
@@ -759,7 +759,8 @@ def insert_people(people: List[Dict[str, Any]]):
                     .execute()
                 )
                 if not section_insert.data:
-                    raise HTTPException(status_code=500, detail="Section insert failed")
+                    err = (section_insert.error or {}).get("message", "unknown")
+                    raise HTTPException(status_code=500, detail=f"insert_people: section insert failed — {err}")
                 section_id = section_insert.data[0]["id"]
                 items = section.get("items") or []
                 if items:
@@ -770,7 +771,7 @@ def insert_people(people: List[Dict[str, Any]]):
 
         return {"message": "People inserted successfully"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"insert_people: {type(e).__name__}: {e}")
 
 
 @router.post("/sendMessage")
@@ -806,7 +807,8 @@ def send_message(payload: Dict[str, str], user: dict = Depends(get_current_user)
         if not conversation_id:
             conv = supabase.table("conversations").insert({}).execute()
             if not conv.data:
-                raise HTTPException(status_code=500, detail="Failed to create conversation")
+                err = (conv.error or {}).get("message", "unknown")
+                raise HTTPException(status_code=500, detail=f"send_message: create conversation failed — {err}")
             conversation_id = conv.data[0]["id"]
 
             supabase.table("conversation_participants").insert([
@@ -822,7 +824,8 @@ def send_message(payload: Dict[str, str], user: dict = Depends(get_current_user)
         }).execute()
 
         if not msg.data:
-            raise HTTPException(status_code=500, detail="Failed to send message")
+            err = (msg.error or {}).get("message", "unknown")
+            raise HTTPException(status_code=500, detail=f"send_message: insert message failed — {err}")
 
         # Update conversation timestamp
         supabase.table("conversations").update({
@@ -845,7 +848,7 @@ def send_message(payload: Dict[str, str], user: dict = Depends(get_current_user)
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"send_message: {type(e).__name__}: {e}")
 
 
 @router.post("/getMessages")
@@ -888,4 +891,4 @@ def get_messages(payload: Dict[str, str], user: dict = Depends(get_current_user)
         return messages_res.data or []
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"get_messages: {type(e).__name__}: {e}")

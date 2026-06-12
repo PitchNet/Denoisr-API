@@ -36,8 +36,6 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
             )
 
         user = supabase.table("people").select("*").eq("id", subject).single().execute()
-        if not user.data:
-            user = supabase.table("people").select("*").eq("id", subject).single().execute()
 
         if not user.data:
             raise HTTPException(status_code=401, detail="User not found")
@@ -75,14 +73,15 @@ def company_details(payload: Dict[str, Any], user: dict = Depends(get_current_us
         else:
             insert = supabase.table("companies").insert(company_data).execute()
             if not insert.data:
-                raise HTTPException(status_code=500, detail="Company creation failed")
+                err = (insert.error or {}).get("message", "unknown")
+                raise HTTPException(status_code=500, detail=f"company_details: create failed — {err}")
             company_id = insert.data[0]["id"]
 
         supabase.table("people").update({"companyid": company_id}).eq("id", user["id"]).execute()
         return {"message": "Company saved", "companyId": company_id}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"company_details: {type(e).__name__}: {e}")
 
 
 @router.get("/getCompany")
@@ -115,7 +114,7 @@ def get_company(user: dict = Depends(get_current_user)):
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"get_company: {type(e).__name__}: {e}")
 
 
 @router.post("/jobDetails")
@@ -148,7 +147,8 @@ def job_details(payload: Dict[str, Any], user: dict = Depends(get_current_user))
         else:
             insert = supabase.table("jobs").insert(job_payload).execute()
             if not insert.data:
-                raise HTTPException(status_code=500, detail="Job creation failed")
+                err = (insert.error or {}).get("message", "unknown")
+                raise HTTPException(status_code=500, detail=f"job_details: create failed — {err}")
             job_id = insert.data[0]["id"]
 
         # Replace highlights
@@ -189,7 +189,7 @@ def job_details(payload: Dict[str, Any], user: dict = Depends(get_current_user))
         return {"message": "Job saved", "jobId": job_id}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"job_details: {type(e).__name__}: {e}")
 
 
 @router.get("/companyJobs")
@@ -240,37 +240,7 @@ def company_jobs(user: dict = Depends(get_current_user)):
         return result
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-def _relative_time(dt_str: str) -> str:
-    if not dt_str:
-        return ""
-    try:
-        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-        now = datetime.now(timezone.utc)
-        diff = now - dt
-        days = diff.days
-        if days < 1:
-            hours = int(diff.total_seconds() // 3600)
-            if hours < 1:
-                minutes = int(diff.total_seconds() // 60)
-                return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
-            return f"{hours} hour{'s' if hours != 1 else ''} ago"
-        if days == 1:
-            return "1 day ago"
-        if days < 7:
-            return f"{days} days ago"
-        if days < 30:
-            weeks = days // 7
-            return f"{weeks} week{'s' if weeks != 1 else ''} ago"
-        if days < 365:
-            months = days // 30
-            return f"{months} month{'s' if months != 1 else ''} ago"
-        years = days // 365
-        return f"{years} year{'s' if years != 1 else ''} ago"
-    except Exception:
-        return dt_str or ""
+        raise HTTPException(status_code=500, detail=f"company_jobs: {type(e).__name__}: {e}")
 
 
 @router.post("/jobApplicants")
@@ -360,7 +330,7 @@ def job_applicants(payload: Dict[str, Any], user: dict = Depends(get_current_use
         return result
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"job_applicants: {type(e).__name__}: {e}")
 
 
 @router.get("/jobApplicantCounts")
@@ -389,7 +359,7 @@ def job_applicant_counts(user: dict = Depends(get_current_user)):
         return [{"jobId": jid, "count": counts.get(jid, 0)} for jid in job_ids]
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"job_applicant_counts: {type(e).__name__}: {e}")
 
 
 @router.post("/jobApplicantStatus")
@@ -431,4 +401,4 @@ def job_applicant_status(payload: Dict[str, Any], user: dict = Depends(get_curre
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"job_applicant_status: {type(e).__name__}: {e}")

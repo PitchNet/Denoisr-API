@@ -38,8 +38,6 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
             )
 
         user = supabase.table("people").select("*").eq("id", subject).single().execute()
-        if not user.data:
-            user = supabase.table("people").select("*").eq("id", subject).single().execute()
 
         if not user.data:
             raise HTTPException(status_code=401, detail="User not found")
@@ -114,7 +112,7 @@ def get_profile(user: dict = Depends(get_current_user)):
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"get_profile: {type(e).__name__}: {e}")
 
 
 @router.post("/updateProfile")
@@ -199,40 +197,7 @@ def update_profile(payload: Dict[str, Any], user: dict = Depends(get_current_use
         return {"message": "Profile updated successfully"}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/uploadImage")
-async def upload_image(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    try:
-        auth_token = UploadImageKey()
-        if not auth_token:
-            raise HTTPException(status_code=500, detail="Failed to get upload auth token")
-
-        contents = await file.read()
-
-        response = requests.post(
-            "https://imgbb.com/json",
-            files={"source": (file.filename, contents, file.content_type)},
-            data={
-                "type": "file",
-                "action": "upload",
-                "auth_token": auth_token,
-            },
-            timeout=60,
-        )
-
-        result = response.json()
-
-        if result.get("status_code") != 200:
-            raise HTTPException(status_code=500, detail="Image upload failed")
-
-        return {"url": result["image"]["url"]}
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"update_profile: {type(e).__name__}: {e}")
 
 
 @router.post("/uploadImage")
@@ -277,4 +242,4 @@ async def upload_image(file: UploadFile = File(...), user: dict = Depends(get_cu
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"upload_image: {type(e).__name__}: {e}")

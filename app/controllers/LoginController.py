@@ -187,7 +187,8 @@ def signup(user: UserCreate):
     insert = supabase.table("people").insert(user_payload).execute()
 
     if not insert.data:
-        raise HTTPException(status_code=500, detail="User creation failed")
+        err = (insert.error or {}).get("message", "unknown")
+        raise HTTPException(status_code=500, detail=f"signup: user creation failed — {err}")
 
     user_row = insert.data[0]
     user_id = user_row["id"]
@@ -201,8 +202,8 @@ def signup(user: UserCreate):
                 {"person_id": person_id, "highlight": h}
                 for h in highlights
             ]).execute()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[signup] Highlights insert failed (non-fatal): {type(e).__name__}: {e}")
 
     # 5. Tags
     tags = user.tags or []
@@ -219,7 +220,8 @@ def signup(user: UserCreate):
             supabase.table("people_sections").insert({"person_id": person_id, "title": section.title}).execute()
         )
         if not section_insert.data:
-            raise HTTPException(status_code=500, detail="Section insert failed")
+            err = (section_insert.error or {}).get("message", "unknown")
+            raise HTTPException(status_code=500, detail=f"signup: section insert failed — {err}")
         section_id = section_insert.data[0]["id"]
         items = section.items or []
         if items:
@@ -371,4 +373,4 @@ Now restructure this LinkedIn data:
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"linkedin_import: {type(e).__name__}: {e}")
