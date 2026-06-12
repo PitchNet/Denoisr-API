@@ -30,6 +30,7 @@ router = APIRouter(prefix="/FeedController", tags=["Feed"])
 # Config
 # --------------------------
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
+FETCH_BATCH_SIZE = int(os.getenv("FETCH_BATCH_SIZE", "10"))
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
@@ -154,7 +155,7 @@ def insert_jobs(jobs: List[Dict[str, Any]]):
         raise HTTPException(status_code=500, detail=f"insert_jobs: {type(e).__name__}: {e}")
 
 
-@router.post("/fetchPeople", response_model=List[Dict[str, Any]])
+@router.post("/fetchPeople", response_model=Dict[str, Any])
 def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user)):
     try:
         # Base query with related data
@@ -178,6 +179,8 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
 
         bookmarked = filters.get("bookmarked")
         search = filters.get("search")
+        cursor = filters.get("cursor")
+        batch_size = filters.get("batch_size") or FETCH_BATCH_SIZE
 
         if bookmarked:
             bookmark_res = supabase.table("user_people_actions") \
@@ -265,8 +268,52 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
         if salary is not None:
             query = query.lte("salary", salary)
 
+        # Count total matching rows (before cursor/limit)
+        count_res = supabase.table("people").select("*", count="exact").neq("id", user["id"])
+        if bookmarked:
+            if not bookmark_ids:
+                total_count = 0
+            else:
+                count_res = count_res.in_("id", bookmark_ids)
+        else:
+            if excluded_ids:
+                count_res = count_res.not_.in_("id", list(excluded_ids))
+        if search and search.strip() and search_ids:
+            count_res = count_res.in_("id", list(search_ids))
+        if role:
+            count_res = count_res.or_(f"headline.ilike.%{role}%,subheadline.ilike.%{role}%,intro.ilike.%{role}%")
+        if experience is not None:
+            count_res = count_res.lte("experience", experience)
+        if country:
+            countries_ct = [c.strip() for c in country.split(",") if c.strip()]
+            if countries_ct:
+                or_ct = ",".join([f"location.ilike.%{c}%" for c in countries_ct])
+                count_res = count_res.or_(or_ct)
+        if city:
+            cities_ct = [c.strip() for c in city.split(",") if c.strip()]
+            if cities_ct:
+                or_ct = ",".join([f"location.ilike.%{c}%" for c in cities_ct])
+                count_res = count_res.or_(or_ct)
+        if salary is not None:
+            count_res = count_res.lte("salary", salary)
+        total_count_data = count_res.execute()
+        total_count = getattr(total_count_data, 'count', 0)
+
+        # Pagination
+        if cursor:
+            c = supabase.table("people").select("created_at").eq("id", cursor).single().execute()
+            if c.data:
+                query = query.lt("created_at", c.data["created_at"])
+
+        query = query.order("created_at", desc=True).limit(batch_size + 1)
+
         people_res = query.execute()
         people = people_res.data or []
+
+        has_more = len(people) > batch_size
+        if has_more:
+            people.pop()
+
         result: List[Dict[str, Any]] = []
 
         for p in people:
@@ -299,7 +346,13 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
                 "sections": sections,
             })
 
-        return result
+        return {
+            "items": result,
+            "next_cursor": result[-1]["id"] if has_more else None,
+            "has_more": has_more,
+            "total_count": total_count,
+        }
+
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"fetch_people: {type(e).__name__}: {e}")
@@ -430,7 +483,7 @@ def get_connections(user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=f"get_connections: {type(e).__name__}: {e}")
 
 
-@router.post("/fetchJobs", response_model=List[Dict[str, Any]])
+@router.post("/fetchJobs", response_model=Dict[str, Any])
 def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
 
     try:
@@ -456,6 +509,8 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
         salary = filters.get("salary")
         bookmarked = filters.get("bookmarked")
         search = filters.get("search")
+        cursor = filters.get("cursor")
+        batch_size = filters.get("batch_size") or FETCH_BATCH_SIZE
 
         accepted_job_ids = []
         bookmark_ids = []
@@ -557,15 +612,79 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
                 return []
             query = query.in_("id", bookmark_ids)
 
+        # Count total matching rows (before cursor/limit)
+        count_res = supabase.table("jobs").select("*", count="exact")
+        if role:
+            count_res = count_res.or_(f"headline.ilike.%{role}%,subheadline.ilike.%{role}%,intro.ilike.%{role}%")
+        if experience is not None:
+            count_res = count_res.lte("experience", experience)
+        if country:
+            countries_ct = [c.strip() for c in country.split(",") if c.strip()]
+            if countries_ct:
+                count_res = count_res.or_(",".join([f"location.ilike.%{c}%" for c in countries_ct]))
+        if city:
+            cities_ct = [c.strip() for c in city.split(",") if c.strip()]
+            if cities_ct:
+                count_res = count_res.or_(",".join([f"location.ilike.%{c}%" for c in cities_ct]))
+        if salary is not None:
+            count_res = count_res.lte("salary", salary)
+        if accepted_job_ids:
+            count_res = count_res.not_.in_("id", accepted_job_ids)
+        if bookmarked:
+            if bookmark_ids:
+                count_res = count_res.in_("id", bookmark_ids)
+        if search and search.strip():
+            q = search.strip()
+            sid = set()
+            main_r = supabase.table("jobs").select("id").or_(
+                f"headline.ilike.%{q}%,subheadline.ilike.%{q}%,organization.ilike.%{q}%,location.ilike.%{q}%"
+            ).execute()
+            for r in (main_r.data or []):
+                sid.add(r["id"])
+            hl_r = supabase.table("job_highlights").select("job_id").ilike("highlight", f"%{q}%").execute()
+            for r in (hl_r.data or []):
+                sid.add(r["job_id"])
+            tag_r = supabase.table("job_tags").select("job_id").ilike("tag", f"%{q}%").execute()
+            for r in (tag_r.data or []):
+                sid.add(r["job_id"])
+            item_r = supabase.table("job_section_items").select("section_id").ilike("item", f"%{q}%").execute()
+            sec_ids = [r["section_id"] for r in (item_r.data or [])]
+            if sec_ids:
+                sec_r = supabase.table("job_sections").select("job_id").in_("id", sec_ids).execute()
+                for r in (sec_r.data or []):
+                    sid.add(r["job_id"])
+            if not sid:
+                total_count = 0
+            else:
+                count_res = count_res.in_("id", list(sid))
+        if 'total_count' not in locals():
+            total_count_data = count_res.execute()
+            total_count = getattr(total_count_data, 'count', 0)
+
         # --------------------------
-        # 3. Fetch jobs
+        # 3. Pagination
         # --------------------------
+        if cursor:
+            c = supabase.table("jobs").select("created_at").eq("id", cursor).single().execute()
+            if c.data:
+                query = query.lt("created_at", c.data["created_at"])
+
+        query = query.order("created_at", desc=True).limit(batch_size + 1)
+
+        # --------------------------
+        # 4. Fetch jobs
+        # --------------------------
+
         jobs_res = query.execute()
 
         jobs = jobs_res.data or []
 
+        has_more = len(jobs) > batch_size
+        if has_more:
+            jobs.pop()
+
         if not jobs:
-            return []
+            return {"items": [], "next_cursor": None, "has_more": False, "total_count": total_count}
 
         # --------------------------
         # 5. Grouping
@@ -604,7 +723,12 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
                 ]
             })
 
-        return result
+        return {
+            "items": result,
+            "next_cursor": result[-1]["id"] if has_more else None,
+            "has_more": has_more,
+            "total_count": total_count,
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"fetch_jobs: {type(e).__name__}: {e}")
