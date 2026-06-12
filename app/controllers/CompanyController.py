@@ -243,6 +243,36 @@ def company_jobs(user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=f"company_jobs: {type(e).__name__}: {e}")
 
 
+def _relative_time(dt_str: str) -> str:
+    if not dt_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        diff = now - dt
+        days = diff.days
+        if days < 1:
+            hours = int(diff.total_seconds() // 3600)
+            if hours < 1:
+                minutes = int(diff.total_seconds() // 60)
+                return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+            return f"{hours} hour{'s' if hours != 1 else ''} ago"
+        if days == 1:
+            return "1 day ago"
+        if days < 7:
+            return f"{days} days ago"
+        if days < 30:
+            weeks = days // 7
+            return f"{weeks} week{'s' if weeks != 1 else ''} ago"
+        if days < 365:
+            months = days // 30
+            return f"{months} month{'s' if months != 1 else ''} ago"
+        years = days // 365
+        return f"{years} year{'s' if years != 1 else ''} ago"
+    except Exception:
+        return dt_str or ""
+
+
 @router.post("/jobApplicants")
 def job_applicants(payload: Dict[str, Any], user: dict = Depends(get_current_user)):
     try:
