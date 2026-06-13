@@ -42,10 +42,23 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
 
 
 def send_push(user_id: str, title: str, body: str, data: Dict[str, Any] = None):
-    """Send a push notification to all devices of a user."""
+    """Send a push notification to all devices of a user and persist in-app notification."""
     if not VAPID_PRIVATE_KEY or not VAPID_PUBLIC_KEY:
         print("[send_push] VAPID keys not configured")
         return
+
+    # Persist in-app notification
+    notif_data = data or {}
+    try:
+        supabase.table("notifications").insert({
+            "user_id": user_id,
+            "type": notif_data.get("type", "general"),
+            "title": title,
+            "body": body,
+            "data": notif_data,
+        }).execute()
+    except Exception as e:
+        print(f"[send_push] Failed to persist notification: {e}")
 
     subs = supabase.table("push_subscriptions") \
         .select("*") \
@@ -150,3 +163,52 @@ def test_push(user: dict = Depends(get_current_user)):
         {"type": "test"},
     )
     return {"message": "Test push sent"}
+
+
+@router.get("/getNotifications")
+def get_notifications(cursor: str = None, limit: int = 20, user: dict = Depends(get_current_user)):
+    query = supabase.table("notifications").select("*") \
+        .eq("user_id", user["id"]) \
+        .order("created_at", desc=True) \
+        .limit(limit)
+
+    if cursor:
+        c = supabase.table("notifications").select("created_at").eq("id", cursor).single().execute()
+        if c.data:
+            query = query.lt("created_at", c.data["created_at"])
+
+    result = query.execute()
+    items = result.data or []
+    has_more = len(items) == limit
+    next_cursor = items[-1]["id"] if has_more else None
+
+    return {
+        "items": items,
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+    }
+
+
+@router.post("/markRead")
+def mark_read(payload: Dict[str, Any], user: dict = Depends(get_current_user)):
+    ids = payload.get("ids")
+    if ids:
+        supabase.table("notifications").update({"read": True}) \
+            .in_("id", ids) \
+            .eq("user_id", user["id"]) \
+            .execute()
+    else:
+        supabase.table("notifications").update({"read": True}) \
+            .eq("user_id", user["id"]) \
+            .eq("read", False) \
+            .execute()
+    return {"message": "Marked as read"}
+
+
+@router.get("/unreadCount")
+def unread_count(user: dict = Depends(get_current_user)):
+    result = supabase.table("notifications").select("id") \
+        .eq("user_id", user["id"]) \
+        .eq("read", False) \
+        .execute()
+    return {"count": len(result.data or [])}
