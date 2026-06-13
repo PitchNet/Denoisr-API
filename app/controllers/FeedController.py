@@ -301,11 +301,15 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
 
         # Pagination
         if cursor:
-            c = supabase.table("people").select("created_at").eq("id", cursor).single().execute()
+            c = supabase.table("people").select("created_at, id").eq("id", cursor).single().execute()
             if c.data:
-                query = query.lt("created_at", c.data["created_at"])
+                cursor_time = c.data["created_at"]
+                query = query.or_(
+                    f"created_at.lt.{cursor_time},"
+                    f"and(created_at.eq.{cursor_time},id.lt.{cursor})"
+                )
 
-        query = query.order("created_at", desc=True).limit(batch_size + 1)
+        query = query.order("created_at", desc=True).order("id", desc=True).limit(batch_size + 1)
 
         people_res = query.execute()
         people = people_res.data or []
@@ -665,11 +669,15 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
         # 3. Pagination
         # --------------------------
         if cursor:
-            c = supabase.table("jobs").select("created_at").eq("id", cursor).single().execute()
+            c = supabase.table("jobs").select("created_at, id").eq("id", cursor).single().execute()
             if c.data:
-                query = query.lt("created_at", c.data["created_at"])
+                cursor_time = c.data["created_at"]
+                query = query.or_(
+                    f"created_at.lt.{cursor_time},"
+                    f"and(created_at.eq.{cursor_time},id.lt.{cursor})"
+                )
 
-        query = query.order("created_at", desc=True).limit(batch_size + 1)
+        query = query.order("created_at", desc=True).order("id", desc=True).limit(batch_size + 1)
 
         # --------------------------
         # 4. Fetch jobs
