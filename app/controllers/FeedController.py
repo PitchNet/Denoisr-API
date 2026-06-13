@@ -269,35 +269,39 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
             query = query.lte("salary", salary)
 
         # Count total matching rows (before cursor/limit)
-        count_res = supabase.table("people").select("*", count="exact").neq("id", user["id"])
+        count_known = False
+        total_count = 0
+        count_query = supabase.table("people").select("id").neq("id", user["id"])
         if bookmarked:
             if not bookmark_ids:
                 total_count = 0
+                count_known = True
             else:
-                count_res = count_res.in_("id", bookmark_ids)
+                count_query = count_query.in_("id", bookmark_ids)
         else:
             if excluded_ids:
-                count_res = count_res.not_.in_("id", list(excluded_ids))
+                count_query = count_query.not_.in_("id", list(excluded_ids))
         if search and search.strip() and search_ids:
-            count_res = count_res.in_("id", list(search_ids))
+            count_query = count_query.in_("id", list(search_ids))
         if role:
-            count_res = count_res.or_(f"headline.ilike.%{role}%,subheadline.ilike.%{role}%,intro.ilike.%{role}%")
+            count_query = count_query.or_(f"headline.ilike.%{role}%,subheadline.ilike.%{role}%,intro.ilike.%{role}%")
         if experience is not None:
-            count_res = count_res.lte("experience", experience)
+            count_query = count_query.lte("experience", experience)
         if country:
             countries_ct = [c.strip() for c in country.split(",") if c.strip()]
             if countries_ct:
                 or_ct = ",".join([f"location.ilike.%{c}%" for c in countries_ct])
-                count_res = count_res.or_(or_ct)
+                count_query = count_query.or_(or_ct)
         if city:
             cities_ct = [c.strip() for c in city.split(",") if c.strip()]
             if cities_ct:
                 or_ct = ",".join([f"location.ilike.%{c}%" for c in cities_ct])
-                count_res = count_res.or_(or_ct)
+                count_query = count_query.or_(or_ct)
         if salary is not None:
-            count_res = count_res.lte("salary", salary)
-        total_count_data = count_res.execute()
-        total_count = getattr(total_count_data, 'count', 0)
+            count_query = count_query.lte("salary", salary)
+        if not count_known:
+            count_result = count_query.execute()
+            total_count = len(count_result.data or [])
 
         # Pagination
         if cursor:
@@ -617,53 +621,31 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
             query = query.in_("id", bookmark_ids)
 
         # Count total matching rows (before cursor/limit)
-        count_res = supabase.table("jobs").select("*", count="exact")
+        total_count = 0
+        count_query = supabase.table("jobs").select("id")
         if role:
-            count_res = count_res.or_(f"headline.ilike.%{role}%,subheadline.ilike.%{role}%,intro.ilike.%{role}%")
+            count_query = count_query.or_(f"headline.ilike.%{role}%,subheadline.ilike.%{role}%,intro.ilike.%{role}%")
         if experience is not None:
-            count_res = count_res.lte("experience", experience)
+            count_query = count_query.lte("experience", experience)
         if country:
             countries_ct = [c.strip() for c in country.split(",") if c.strip()]
             if countries_ct:
-                count_res = count_res.or_(",".join([f"location.ilike.%{c}%" for c in countries_ct]))
+                count_query = count_query.or_(",".join([f"location.ilike.%{c}%" for c in countries_ct]))
         if city:
             cities_ct = [c.strip() for c in city.split(",") if c.strip()]
             if cities_ct:
-                count_res = count_res.or_(",".join([f"location.ilike.%{c}%" for c in cities_ct]))
+                count_query = count_query.or_(",".join([f"location.ilike.%{c}%" for c in cities_ct]))
         if salary is not None:
-            count_res = count_res.lte("salary", salary)
+            count_query = count_query.lte("salary", salary)
         if accepted_job_ids:
-            count_res = count_res.not_.in_("id", accepted_job_ids)
+            count_query = count_query.not_.in_("id", accepted_job_ids)
         if bookmarked:
             if bookmark_ids:
-                count_res = count_res.in_("id", bookmark_ids)
+                count_query = count_query.in_("id", bookmark_ids)
         if search and search.strip():
-            q = search.strip()
-            sid = set()
-            main_r = supabase.table("jobs").select("id").or_(
-                f"headline.ilike.%{q}%,subheadline.ilike.%{q}%,organization.ilike.%{q}%,location.ilike.%{q}%"
-            ).execute()
-            for r in (main_r.data or []):
-                sid.add(r["id"])
-            hl_r = supabase.table("job_highlights").select("job_id").ilike("highlight", f"%{q}%").execute()
-            for r in (hl_r.data or []):
-                sid.add(r["job_id"])
-            tag_r = supabase.table("job_tags").select("job_id").ilike("tag", f"%{q}%").execute()
-            for r in (tag_r.data or []):
-                sid.add(r["job_id"])
-            item_r = supabase.table("job_section_items").select("section_id").ilike("item", f"%{q}%").execute()
-            sec_ids = [r["section_id"] for r in (item_r.data or [])]
-            if sec_ids:
-                sec_r = supabase.table("job_sections").select("job_id").in_("id", sec_ids).execute()
-                for r in (sec_r.data or []):
-                    sid.add(r["job_id"])
-            if not sid:
-                total_count = 0
-            else:
-                count_res = count_res.in_("id", list(sid))
-        if 'total_count' not in locals():
-            total_count_data = count_res.execute()
-            total_count = getattr(total_count_data, 'count', 0)
+            count_query = count_query.in_("id", list(search_ids))
+        count_result = count_query.execute()
+        total_count = len(count_result.data or [])
 
         # --------------------------
         # 3. Pagination
