@@ -197,7 +197,7 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
             query = query.in_("id", bookmark_ids)
         else:
             interactions = supabase.table("user_people_actions") \
-                .select("user_id, people_id") \
+                .select("user_id, people_id, action") \
                 .or_(
                     f"user_id.eq.{user['id']},"
                     f"people_id.eq.{user['id']}"
@@ -209,7 +209,7 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
             for row in (interactions.data or []):
                 if row.get("user_id") == user["id"]:
                     excluded_ids.add(row["people_id"])
-                if row.get("people_id") == user["id"]:
+                elif row.get("action") == "connected" and row.get("people_id") == user["id"]:
                     excluded_ids.add(row["user_id"])
 
             if excluded_ids:
