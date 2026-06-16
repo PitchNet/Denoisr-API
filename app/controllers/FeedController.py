@@ -171,6 +171,9 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
         # Exclude current user
         query = query.neq("id", user["id"])
 
+        # Only show profiles that are visible in the swipe feed
+        query = query.eq("profile_visible", True)
+
         role = filters.get("role")
         experience = filters.get("experience")
         country = filters.get("country")
@@ -271,7 +274,7 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
         # Count total matching rows (before cursor/limit)
         count_known = False
         total_count = 0
-        count_query = supabase.table("people").select("id").neq("id", user["id"])
+        count_query = supabase.table("people").select("id").neq("id", user["id"]).eq("profile_visible", True)
         if bookmarked:
             if not bookmark_ids:
                 total_count = 0
@@ -965,6 +968,22 @@ def send_message(payload: Dict[str, str], user: dict = Depends(get_current_user)
         raise HTTPException(status_code=400, detail="Missing recipientId or content")
 
     try:
+        # Check recipient's messaging preference
+        recipient_pref = supabase.table("people").select("allow_messages_from") \
+            .eq("id", recipient_id).single().execute()
+        if recipient_pref.data:
+            pref = recipient_pref.data.get("allow_messages_from", "all")
+            if pref == "none":
+                raise HTTPException(status_code=403, detail="This user is not accepting messages")
+            if pref == "connections":
+                conn_check = supabase.table("user_people_actions").select("id") \
+                    .or_(
+                        f"and(user_id.eq.{user['id']},people_id.eq.{recipient_id},action.eq.connected),"
+                        f"and(user_id.eq.{recipient_id},people_id.eq.{user['id']},action.eq.connected)"
+                    ).limit(1).execute()
+                if not conn_check.data:
+                    raise HTTPException(status_code=403, detail="You must be connected to message this user")
+
         # Find existing conversation between the two users
         my_convs = supabase.table("conversation_participants") \
             .select("conversation_id") \
@@ -1029,6 +1048,8 @@ def send_message(payload: Dict[str, str], user: dict = Depends(get_current_user)
             "msg": msg.data[0],
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"send_message: {type(e).__name__}: {e}")
 

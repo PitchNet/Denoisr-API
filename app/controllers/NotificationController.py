@@ -47,6 +47,23 @@ def send_push(user_id: str, title: str, body: str, data: Dict[str, Any] = None):
         print("[send_push] VAPID keys not configured")
         return
 
+    # Check notification preferences before doing anything
+    notif_type = (data or {}).get("type", "general")
+    try:
+        pref_res = supabase.table("people").select(
+            "notify_connections, notify_messages, notify_job_updates"
+        ).eq("id", user_id).single().execute()
+        if pref_res.data:
+            prefs = pref_res.data
+            if notif_type == "connection" and not prefs.get("notify_connections", True):
+                return
+            if notif_type == "message" and not prefs.get("notify_messages", True):
+                return
+            if notif_type == "job_status" and not prefs.get("notify_job_updates", True):
+                return
+    except Exception as e:
+        print(f"[send_push] Failed to check notification prefs: {e}")
+
     # Persist in-app notification
     notif_data = data or {}
     try:
