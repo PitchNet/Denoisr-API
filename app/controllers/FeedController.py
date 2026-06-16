@@ -370,7 +370,7 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
 
 
 @router.get("/getConnections", response_model=List[Dict[str, Any]])
-def get_connections(q: str | None = None, user: dict = Depends(get_current_user)):
+def get_connections(q: str | None = None, archived: bool = False, user: dict = Depends(get_current_user)):
     try:
         # Fetch connected person IDs and their connection timestamps
         connected_res = supabase.table("user_people_actions") \
@@ -386,15 +386,20 @@ def get_connections(q: str | None = None, user: dict = Depends(get_current_user)
             connected_ids.add(pid)
             connected_at_map[pid] = c.get("created_at")
 
-        # Build map of person_id -> conversation_id
+        # Build map of person_id -> conversation_id; track archived/muted per conversation
         conversation_map: Dict[str, str] = {}
+        conv_meta: Dict[str, Dict[str, bool]] = {}
         if connected_ids:
             my_parts = supabase.table("conversation_participants") \
-                .select("conversation_id") \
+                .select("conversation_id, archived, muted") \
                 .eq("user_id", user["id"]) \
                 .execute()
 
             my_conv_ids = [c["conversation_id"] for c in (my_parts.data or [])]
+            conv_meta = {
+                c["conversation_id"]: {"archived": bool(c.get("archived")), "muted": bool(c.get("muted"))}
+                for c in (my_parts.data or [])
+            }
 
             if my_conv_ids:
                 their_parts = supabase.table("conversation_participants") \
@@ -467,6 +472,7 @@ def get_connections(q: str | None = None, user: dict = Depends(get_current_user)
                 if title and body:
                     details.append({"title": title, "body": body})
 
+            conv_id = conversation_map.get(pid)
             result.append({
                 "id": pid,
                 "name": p.get("headline"),
@@ -479,9 +485,16 @@ def get_connections(q: str | None = None, user: dict = Depends(get_current_user)
                 "details": details,
                 "photo": p.get("photo"),
                 "connected": pid in connected_ids,
-                "conversationId": conversation_map.get(pid),
-                "lastMessage": last_message_map.get(conversation_map.get(pid)),
+                "conversationId": conv_id,
+                "lastMessage": last_message_map.get(conv_id),
+                "muted": conv_meta.get(conv_id or "", {}).get("muted", False) if conv_id else False,
             })
+
+        # Filter by archive status (default: exclude archived)
+        result = [
+            r for r in result
+            if conv_meta.get(r.get("conversationId") or "", {}).get("archived", False) == archived
+        ]
 
         # Filter by search query (name or last message content)
         if q and q.strip():
@@ -960,6 +973,40 @@ def withdraw_request(payload: Dict[str, str], user: dict = Depends(get_current_u
         return {"message": "Request withdrawn"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"withdraw_request: {type(e).__name__}: {e}")
+
+
+@router.post("/archiveConversation")
+def archive_conversation(payload: Dict[str, Any], user: dict = Depends(get_current_user)):
+    conversation_id = payload.get("conversationId")
+    if not conversation_id:
+        raise HTTPException(status_code=400, detail="Missing conversationId")
+    archived = payload.get("archived", True)
+    try:
+        supabase.table("conversation_participants") \
+            .update({"archived": archived}) \
+            .eq("conversation_id", conversation_id) \
+            .eq("user_id", user["id"]) \
+            .execute()
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"archive_conversation: {type(e).__name__}: {e}")
+
+
+@router.post("/muteConversation")
+def mute_conversation(payload: Dict[str, Any], user: dict = Depends(get_current_user)):
+    conversation_id = payload.get("conversationId")
+    if not conversation_id:
+        raise HTTPException(status_code=400, detail="Missing conversationId")
+    muted = payload.get("muted", True)
+    try:
+        supabase.table("conversation_participants") \
+            .update({"muted": muted}) \
+            .eq("conversation_id", conversation_id) \
+            .eq("user_id", user["id"]) \
+            .execute()
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"mute_conversation: {type(e).__name__}: {e}")
 
 
 @router.post("/InsertPeople", status_code=201)
