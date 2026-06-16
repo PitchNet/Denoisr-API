@@ -370,7 +370,7 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
 
 
 @router.get("/getConnections", response_model=List[Dict[str, Any]])
-def get_connections(user: dict = Depends(get_current_user)):
+def get_connections(q: str | None = None, user: dict = Depends(get_current_user)):
     try:
         # Fetch connected person IDs and their connection timestamps
         connected_res = supabase.table("user_people_actions") \
@@ -482,6 +482,15 @@ def get_connections(user: dict = Depends(get_current_user)):
                 "conversationId": conversation_map.get(pid),
                 "lastMessage": last_message_map.get(conversation_map.get(pid)),
             })
+
+        # Filter by search query (name or last message content)
+        if q and q.strip():
+            q_lower = q.strip().lower()
+            result = [
+                r for r in result
+                if q_lower in (r.get("name") or "").lower()
+                or q_lower in ((r.get("lastMessage") or {}).get("content", "")).lower()
+            ]
 
         # Sort by recent activity: last message time, then connection time
         result.sort(key=lambda r: (
