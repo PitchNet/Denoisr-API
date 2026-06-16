@@ -904,6 +904,64 @@ def connect_people(payload: Dict[str, str], user: dict = Depends(get_current_use
         raise HTTPException(status_code=500, detail=f"people_action: {type(e).__name__}: {e}")
 
 
+@router.get("/getSentRequests", response_model=List[Dict[str, Any]])
+def get_sent_requests(user: dict = Depends(get_current_user)):
+    try:
+        sent_res = supabase.table("user_people_actions") \
+            .select("people_id, created_at") \
+            .eq("user_id", user["id"]) \
+            .eq("action", "sent") \
+            .execute()
+
+        if not sent_res.data:
+            return []
+
+        people_ids = [r["people_id"] for r in sent_res.data]
+        sent_at_map = {r["people_id"]: r.get("created_at") for r in sent_res.data}
+
+        people_res = supabase.table("people") \
+            .select("id, headline, subheadline, photo") \
+            .in_("id", people_ids) \
+            .execute()
+
+        result = []
+        for p in (people_res.data or []):
+            pid = p["id"]
+            name = p.get("headline") or "Unknown"
+            initials = "".join(part[0].upper() for part in name.strip().split() if part)[:2]
+            result.append({
+                "id": pid,
+                "name": name,
+                "role": p.get("subheadline") or "",
+                "photo": p.get("photo") or "",
+                "avatar": initials or "?",
+                "sentAt": sent_at_map.get(pid),
+            })
+
+        result.sort(key=lambda r: r.get("sentAt") or "", reverse=True)
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"get_sent_requests: {type(e).__name__}: {e}")
+
+
+@router.post("/withdrawRequest")
+def withdraw_request(payload: Dict[str, str], user: dict = Depends(get_current_user)):
+    people_id = payload.get("peopleId")
+    if not people_id:
+        raise HTTPException(status_code=400, detail="Missing peopleId")
+    try:
+        supabase.table("user_people_actions") \
+            .delete() \
+            .eq("user_id", user["id"]) \
+            .eq("people_id", people_id) \
+            .eq("action", "sent") \
+            .execute()
+        return {"message": "Request withdrawn"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"withdraw_request: {type(e).__name__}: {e}")
+
+
 @router.post("/InsertPeople", status_code=201)
 def insert_people(people: List[Dict[str, Any]]):
     try:
