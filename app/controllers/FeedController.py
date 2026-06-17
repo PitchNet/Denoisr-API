@@ -1367,7 +1367,7 @@ def react_to_message(payload: Dict[str, Any], user: dict = Depends(get_current_u
         raise HTTPException(status_code=400, detail="Missing messageId or emoji")
     try:
         msg = supabase.table("messages").select("conversation_id").eq("id", message_id).maybe_single().execute()
-        if not msg.data:
+        if not msg or not msg.data:
             raise HTTPException(status_code=404, detail="Message not found")
         conversation_id = msg.data["conversation_id"]
 
@@ -1384,7 +1384,7 @@ def react_to_message(payload: Dict[str, Any], user: dict = Depends(get_current_u
             .eq("emoji", emoji) \
             .maybe_single().execute()
 
-        if existing.data:
+        if existing and existing.data:
             supabase.table("message_reactions").delete().eq("id", existing.data["id"]).execute()
             return {"success": True, "action": "removed"}
 
