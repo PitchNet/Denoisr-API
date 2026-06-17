@@ -829,6 +829,27 @@ def accept_job(payload: Dict[str, str], user: str = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"job_action: {type(e).__name__}: {e}")
 
+@router.post("/undoJobAction")
+def undo_job_action(payload: Dict[str, str], user: str = Depends(get_current_user)):
+
+    job_id = payload.get("jobId")
+
+    if not user or not job_id:
+        raise HTTPException(status_code=400, detail="Missing fields")
+
+    try:
+        supabase.table("user_job_actions") \
+            .delete() \
+            .eq("user_id", user["id"]) \
+            .eq("job_id", job_id) \
+            .eq("action", "accepted") \
+            .execute()
+
+        return {"message": "Job action undone"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"undo_job_action: {type(e).__name__}: {e}")
+
 @router.post("/peopleAction")
 def connect_people(payload: Dict[str, str], user: dict = Depends(get_current_user)):
 
