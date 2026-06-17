@@ -1319,15 +1319,83 @@ def get_messages(payload: Dict[str, str], user: dict = Depends(get_current_user)
                     conversation_id = their_conv.data["conversation_id"]
 
         if not conversation_id:
-            return []
+            return {"messages": [], "otherReadAt": None}
 
         messages_res = supabase.table("messages") \
-            .select("id, sender_id, content, created_at") \
+            .select("id, sender_id, content, created_at, message_reactions(id, user_id, emoji)") \
             .eq("conversation_id", conversation_id) \
             .order("created_at") \
             .execute()
 
-        return messages_res.data or []
+        participants_res = supabase.table("conversation_participants") \
+            .select("user_id, last_read_at") \
+            .eq("conversation_id", conversation_id) \
+            .execute()
+
+        other_read_at = None
+        for p in (participants_res.data or []):
+            if p["user_id"] != user["id"]:
+                other_read_at = p.get("last_read_at")
+
+        return {"messages": messages_res.data or [], "otherReadAt": other_read_at}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"get_messages: {type(e).__name__}: {e}")
+
+
+@router.post("/markRead")
+def mark_read(payload: Dict[str, Any], user: dict = Depends(get_current_user)):
+    conversation_id = payload.get("conversationId")
+    if not conversation_id:
+        raise HTTPException(status_code=400, detail="Missing conversationId")
+    try:
+        supabase.table("conversation_participants") \
+            .update({"last_read_at": datetime.utcnow().isoformat()}) \
+            .eq("conversation_id", conversation_id) \
+            .eq("user_id", user["id"]) \
+            .execute()
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"mark_read: {type(e).__name__}: {e}")
+
+
+@router.post("/reactToMessage")
+def react_to_message(payload: Dict[str, Any], user: dict = Depends(get_current_user)):
+    message_id = payload.get("messageId")
+    emoji = payload.get("emoji")
+    if not message_id or not emoji:
+        raise HTTPException(status_code=400, detail="Missing messageId or emoji")
+    try:
+        msg = supabase.table("messages").select("conversation_id").eq("id", message_id).maybe_single().execute()
+        if not msg.data:
+            raise HTTPException(status_code=404, detail="Message not found")
+        conversation_id = msg.data["conversation_id"]
+
+        membership = supabase.table("conversation_participants").select("id") \
+            .eq("conversation_id", conversation_id) \
+            .eq("user_id", user["id"]) \
+            .limit(1).execute()
+        if not membership.data:
+            raise HTTPException(status_code=403, detail="Not a participant of this conversation")
+
+        existing = supabase.table("message_reactions").select("id") \
+            .eq("message_id", message_id) \
+            .eq("user_id", user["id"]) \
+            .eq("emoji", emoji) \
+            .maybe_single().execute()
+
+        if existing.data:
+            supabase.table("message_reactions").delete().eq("id", existing.data["id"]).execute()
+            return {"success": True, "action": "removed"}
+
+        supabase.table("message_reactions").insert({
+            "message_id": message_id,
+            "conversation_id": conversation_id,
+            "user_id": user["id"],
+            "emoji": emoji,
+        }).execute()
+        return {"success": True, "action": "added"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"react_to_message: {type(e).__name__}: {e}")
