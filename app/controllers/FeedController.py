@@ -215,6 +215,17 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
             if excluded_ids:
                 query = query.not_.in_("id", list(excluded_ids))
 
+        # Exclude anyone involved in a block, either direction
+        blocks = supabase.table("blocked_users") \
+            .select("blocker_id, blocked_id") \
+            .or_(f"blocker_id.eq.{user['id']},blocked_id.eq.{user['id']}") \
+            .execute()
+        blocked_ids = set()
+        for b in (blocks.data or []):
+            blocked_ids.add(b["blocked_id"] if b["blocker_id"] == user["id"] else b["blocker_id"])
+        if blocked_ids:
+            query = query.not_.in_("id", list(blocked_ids))
+
         # Search → broad match across main fields + related tables
         if search and search.strip():
             q = search.strip()
@@ -385,6 +396,16 @@ def get_connections(q: str | None = None, archived: bool = False, user: dict = D
             pid = c["people_id"]
             connected_ids.add(pid)
             connected_at_map[pid] = c.get("created_at")
+
+        # Drop anyone involved in a block, either direction
+        blocks = supabase.table("blocked_users") \
+            .select("blocker_id, blocked_id") \
+            .or_(f"blocker_id.eq.{user['id']},blocked_id.eq.{user['id']}") \
+            .execute()
+        for b in (blocks.data or []):
+            blocked_pid = b["blocked_id"] if b["blocker_id"] == user["id"] else b["blocker_id"]
+            connected_ids.discard(blocked_pid)
+            connected_at_map.pop(blocked_pid, None)
 
         # Build map of person_id -> conversation_id; track archived/muted per conversation
         conversation_map: Dict[str, str] = {}
@@ -1030,6 +1051,77 @@ def mute_conversation(payload: Dict[str, Any], user: dict = Depends(get_current_
         raise HTTPException(status_code=500, detail=f"mute_conversation: {type(e).__name__}: {e}")
 
 
+@router.post("/blockUser")
+def block_user(payload: Dict[str, Any], user: dict = Depends(get_current_user)):
+    blocked_id = payload.get("peopleId")
+    if not blocked_id:
+        raise HTTPException(status_code=400, detail="Missing peopleId")
+    if blocked_id == user["id"]:
+        raise HTTPException(status_code=400, detail="Cannot block yourself")
+    try:
+        supabase.table("blocked_users").upsert({
+            "blocker_id": user["id"],
+            "blocked_id": blocked_id,
+        }, on_conflict="blocker_id,blocked_id").execute()
+
+        # Drop the connection both ways so the block takes effect in feeds/lists immediately
+        supabase.table("user_people_actions") \
+            .delete() \
+            .eq("user_id", user["id"]) \
+            .eq("people_id", blocked_id) \
+            .execute()
+        supabase.table("user_people_actions") \
+            .delete() \
+            .eq("user_id", blocked_id) \
+            .eq("people_id", user["id"]) \
+            .execute()
+
+        # Archive + mute the shared conversation on the blocker's side, if one exists
+        my_parts = supabase.table("conversation_participants") \
+            .select("conversation_id") \
+            .eq("user_id", user["id"]) \
+            .execute()
+        my_conv_ids = [c["conversation_id"] for c in (my_parts.data or [])]
+        if my_conv_ids:
+            their_conv = supabase.table("conversation_participants") \
+                .select("conversation_id") \
+                .eq("user_id", blocked_id) \
+                .in_("conversation_id", my_conv_ids) \
+                .maybe_single() \
+                .execute()
+            if their_conv.data:
+                supabase.table("conversation_participants") \
+                    .update({"archived": True, "muted": True}) \
+                    .eq("conversation_id", their_conv.data["conversation_id"]) \
+                    .eq("user_id", user["id"]) \
+                    .execute()
+
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"block_user: {type(e).__name__}: {e}")
+
+
+@router.post("/reportUser")
+def report_user(payload: Dict[str, Any], user: dict = Depends(get_current_user)):
+    reported_id = payload.get("peopleId")
+    reason = payload.get("reason")
+    details = payload.get("details")
+    if not reported_id or not reason:
+        raise HTTPException(status_code=400, detail="Missing peopleId or reason")
+    if reported_id == user["id"]:
+        raise HTTPException(status_code=400, detail="Cannot report yourself")
+    try:
+        supabase.table("user_reports").insert({
+            "reporter_id": user["id"],
+            "reported_id": reported_id,
+            "reason": reason,
+            "details": details,
+        }).execute()
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"report_user: {type(e).__name__}: {e}")
+
+
 @router.post("/InsertPeople", status_code=201)
 def insert_people(people: List[Dict[str, Any]]):
     try:
@@ -1103,6 +1195,15 @@ def send_message(payload: Dict[str, str], user: dict = Depends(get_current_user)
         raise HTTPException(status_code=400, detail="Missing recipientId or content")
 
     try:
+        # Refuse if either side has blocked the other
+        block_check = supabase.table("blocked_users").select("id") \
+            .or_(
+                f"and(blocker_id.eq.{user['id']},blocked_id.eq.{recipient_id}),"
+                f"and(blocker_id.eq.{recipient_id},blocked_id.eq.{user['id']})"
+            ).limit(1).execute()
+        if block_check.data:
+            raise HTTPException(status_code=403, detail="You can't message this user")
+
         # Check recipient's messaging preference
         recipient_pref = supabase.table("people").select("allow_messages_from") \
             .eq("id", recipient_id).single().execute()
