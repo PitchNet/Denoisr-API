@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
 from fastapi import HTTPException, Request, Response, status
@@ -10,6 +11,9 @@ load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 10080  # 7 days
+
+RESET_TOKEN_PURPOSE = "password_reset"
+RESET_TOKEN_EXPIRE_MINUTES = 30
 
 AUTH_COOKIE_NAME = "denoisr_auth_token"
 
@@ -72,3 +76,38 @@ def get_current_user_row(request: Request, supabase: Client) -> dict:
     if not user.data:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user.data
+
+
+def create_reset_token(user_id: str, password_hash: str) -> str:
+    """A short-lived, single-use password-reset token. No DB column needed:
+    binding it to a fragment of the current password hash means the token
+    stops verifying the moment the password actually changes, which is what
+    gives it single-use semantics without a 'used' flag anywhere."""
+    payload = {
+        "sub": user_id,
+        "purpose": RESET_TOKEN_PURPOSE,
+        "pwv": (password_hash or "")[-16:],
+        "exp": datetime.utcnow() + timedelta(minutes=RESET_TOKEN_EXPIRE_MINUTES),
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def decode_reset_token(token: str, supabase: Client) -> dict:
+    invalid = HTTPException(status_code=400, detail="This reset link is invalid or has expired.")
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        raise invalid
+
+    if payload.get("purpose") != RESET_TOKEN_PURPOSE or not payload.get("sub"):
+        raise invalid
+
+    user = supabase.table("people").select("*").eq("id", payload["sub"]).execute()
+    if not user.data:
+        raise invalid
+
+    person = user.data[0]
+    if (person.get("passwordhash") or "")[-16:] != payload.get("pwv"):
+        raise invalid
+
+    return person

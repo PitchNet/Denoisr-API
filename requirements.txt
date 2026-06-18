@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 bcrypt
+requests
 python-jose[cryptography]
 supabase
 python-dotenv

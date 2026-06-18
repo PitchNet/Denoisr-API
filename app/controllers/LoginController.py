@@ -10,7 +10,8 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 from typing import Dict, Any
 from app.services.service import UploadImageKey
-from app.auth_utils import get_current_user_row, set_auth_cookie, clear_auth_cookie
+from app.services.email_service import send_password_reset_email, RESEND_API_KEY
+from app.auth_utils import get_current_user_row, set_auth_cookie, clear_auth_cookie, create_reset_token, decode_reset_token
 from apify_client import ApifyClient
 from google import genai
 
@@ -37,6 +38,7 @@ router = APIRouter(prefix="/LoginController", tags=["Login"])
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 10080
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
 
 # --------------------------
 # Models (UPDATED for your payload)
@@ -79,6 +81,15 @@ class UserCreate(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    newPassword: str
 
 
 # --------------------------
@@ -272,6 +283,44 @@ def login(data: LoginRequest, response: Response):
 def logout(response: Response):
     clear_auth_cookie(response)
     return {"message": "Logged out"}
+
+
+@router.post("/forgotPassword")
+def forgot_password(data: ForgotPasswordRequest):
+    user = supabase.table("people").select("id, passwordhash").eq("emailaddress", data.email).execute()
+
+    if not user.data:
+        # Same response as the "found, email sent" case below — otherwise this
+        # endpoint becomes an account-enumeration oracle.
+        return {"message": "If that email is registered, you can reset its password."}
+
+    person = user.data[0]
+    token = create_reset_token(person["id"], person["passwordhash"])
+
+    if RESEND_API_KEY:
+        reset_link = f"{FRONTEND_BASE_URL.rstrip('/')}/reset-password?token={token}"
+        send_password_reset_email(data.email, reset_link)
+        return {"message": "If that email is registered, a reset link is on its way."}
+
+    # No email provider configured: hand the token straight back so the UI
+    # can jump directly to the "set a new password" screen instead of
+    # waiting on an email that will never arrive. This is a deliberate
+    # product trade-off — it means anyone who knows or guesses a registered
+    # email can reset that account's password with no proof of inbox
+    # access. Set RESEND_API_KEY to restore real email verification.
+    return {"message": "No email service is configured — continue below to set a new password.", "token": token}
+
+
+@router.post("/resetPassword")
+def reset_password(data: ResetPasswordRequest):
+    if len(data.newPassword) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+
+    user = decode_reset_token(data.token, supabase)
+    new_hash = hash_password(data.newPassword)
+    supabase.table("people").update({"passwordhash": new_hash}).eq("id", user["id"]).execute()
+
+    return {"message": "Password updated. You can now log in."}
 
 
 @router.get("/profile")

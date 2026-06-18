@@ -31,6 +31,9 @@ python3 -m py_vapid
 | `FETCH_BATCH_SIZE` | Default page size for feed queries (default: `10`) |
 | `COOKIE_SECURE` | `Secure` flag on the auth cookie (default: `true`; set `false` for plain-HTTP local dev) |
 | `COOKIE_SAMESITE` | `SameSite` attribute on the auth cookie (default: `none`, required for the cross-site Vercel↔Render setup; use `lax` if UI and API share a host locally) |
+| `FRONTEND_BASE_URL` | Base URL used to build the password-reset link emailed to users (default: `http://localhost:5173`; set to the deployed UI origin in production) |
+| `RESEND_API_KEY` | API key for [Resend](https://resend.com), used to send password-reset emails. **If unset, `/forgotPassword` skips email entirely and returns the reset token directly in its JSON response** so the UI can jump straight to the "set a new password" screen — see the security note under Auth below before relying on this in production |
+| `RESEND_FROM_EMAIL` | `From` address for reset emails (default: `Denoisr <onboarding@resend.dev>`, Resend's shared sandbox sender — replace with a verified domain sender in production) |
 
 ## Architecture
 
@@ -39,6 +42,12 @@ python3 -m py_vapid
 JWT (HS256), subject (`sub`) is the `people.id` UUID, 7-day lifetime (10080 minutes). The token is issued as an **httpOnly** cookie (`denoisr_auth_token`, see `app/auth_utils.py`) via `Set-Cookie` on `/LoginController/login` and `/LoginController/signup` — it is never returned in a JSON body, so browser-side JS (and therefore XSS) can't read it.
 
 All protected endpoints depend on a local `get_current_user(request: Request)` that delegates to `auth_utils.get_current_user_row(request, supabase)`, which reads the token from the `denoisr_auth_token` cookie (falling back to an `Authorization: Bearer` header for non-browser clients) and looks up the user from `supabase.table("people")`. `POST /LoginController/logout` clears the cookie — call it on client-side logout, since JS can't clear an httpOnly cookie itself.
+
+**Password reset:** `POST /LoginController/forgotPassword` and `POST /LoginController/resetPassword` (below) use a *stateless* reset token — a short-lived (30 min) JWT with `purpose: "password_reset"` and a `pwv` claim (last 16 chars of the current `passwordhash`), signed with the same `SECRET_KEY`. No new DB column or table: `auth_utils.decode_reset_token` re-checks `pwv` against the live `passwordhash` at consume time, so the token stops working the instant the password actually changes — that's what makes it single-use without a "used" flag. See `app/auth_utils.py` (`create_reset_token`/`decode_reset_token`) and `app/services/email_service.py` (delivery via Resend).
+
+`forgot_password` branches on whether `RESEND_API_KEY` is set:
+- **Set:** emails the reset link, response never contains the token. This is the secure mode — only whoever can read that inbox can complete the reset.
+- **Unset (current default — no email provider configured):** the response body includes `token` directly, and `ForgotPasswordPage.tsx` redirects straight to `/reset-password?token=...` with no email step at all. **This is a deliberate but meaningful trade-off**: it means anyone who knows or guesses a registered email can reset that account's password with zero proof of inbox access — there is no email-based identity check happening in this mode. Acceptable for a demo/internal tool; set `RESEND_API_KEY` before this is exposed to users you don't trust with each other's accounts.
 
 ### Controllers
 
@@ -51,6 +60,8 @@ All routers are registered in `app/main.py`. Each file in `app/controllers/` is 
 | POST | `/signup` | No | Create account, insert profile + related rows, set the httpOnly JWT cookie, return `{ user }` (no token, no passwordhash) |
 | POST | `/login` | No | Verify bcrypt password, set the httpOnly JWT cookie, return `{ user }` (no token) |
 | POST | `/logout` | No | Clear the httpOnly JWT cookie |
+| POST | `/forgotPassword` | No | Emails a reset link if `RESEND_API_KEY` is set (generic response either way, doesn't reveal whether the account exists); otherwise returns the reset token directly in the response so the UI can skip straight to the reset screen — see the security note above |
+| POST | `/resetPassword` | No | Consumes a reset token (`{ token, newPassword }`) and updates `passwordhash` |
 | GET | `/keepAlive` | No | Health-check ping |
 | POST | `/linkedinImport` | No | Scrape LinkedIn via Apify → restructure with Gemini → return pre-filled profile JSON |
 | GET | `/profile` | Yes | Legacy endpoint; returns current user info |
