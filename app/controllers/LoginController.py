@@ -299,16 +299,18 @@ def forgot_password(data: ForgotPasswordRequest):
 
     if RESEND_API_KEY:
         reset_link = f"{FRONTEND_BASE_URL.rstrip('/')}/reset-password?token={token}"
-        send_password_reset_email(data.email, reset_link)
-        return {"message": "If that email is registered, a reset link is on its way."}
+        if send_password_reset_email(data.email, reset_link):
+            return {"message": "If that email is registered, a reset link is on its way."}
+        print(f"[forgot_password] Resend delivery failed for {data.email}, falling back to inline token")
 
-    # No email provider configured: hand the token straight back so the UI
-    # can jump directly to the "set a new password" screen instead of
-    # waiting on an email that will never arrive. This is a deliberate
-    # product trade-off — it means anyone who knows or guesses a registered
-    # email can reset that account's password with no proof of inbox
-    # access. Set RESEND_API_KEY to restore real email verification.
-    return {"message": "No email service is configured — continue below to set a new password.", "token": token}
+    # No email provider configured, or Resend delivery failed: hand the
+    # token straight back so the UI can jump directly to the "set a new
+    # password" screen instead of waiting on an email that will never
+    # arrive. This is a deliberate product trade-off — it means anyone
+    # who knows or guesses a registered email can reset that account's
+    # password with no proof of inbox access. Set RESEND_API_KEY (and
+    # a verified domain) to restore real email verification.
+    return {"message": "No email service is available — continue below to set a new password.", "token": token}
 
 
 @router.post("/resetPassword")

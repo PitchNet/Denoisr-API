@@ -5,18 +5,12 @@ RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "Denoisr <onboarding@resend.dev>")
 
 
-def send_password_reset_email(to_email: str, reset_link: str) -> None:
-    """Send the password-reset email via Resend.
-
-    Swallows delivery failures (just logs them) rather than raising: the
-    caller always returns the same generic response regardless of whether
-    the address is registered or the email actually went out, so a
-    transient provider outage doesn't turn into an account-enumeration
-    signal or a 500.
-    """
+def send_password_reset_email(to_email: str, reset_link: str) -> bool:
+    """Send the password-reset email via Resend. Returns True on success, False
+    on any delivery failure so the caller can fall back to an inline token."""
     if not RESEND_API_KEY:
         print(f"[email_service] RESEND_API_KEY not set — password reset link for {to_email}: {reset_link}")
-        return
+        return True
 
     try:
         response = requests.post(
@@ -34,7 +28,12 @@ def send_password_reset_email(to_email: str, reset_link: str) -> None:
             },
             timeout=10,
         )
+
         if response.status_code >= 400:
             print(f"[email_service] Resend API error {response.status_code}: {response.text}")
+            return False
+
+        return True
     except requests.RequestException as e:
         print(f"[email_service] Failed to send password reset email: {type(e).__name__}: {e}")
+        return False
