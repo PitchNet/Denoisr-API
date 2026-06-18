@@ -252,6 +252,7 @@ def signup(user: UserCreate, response: Response):
     return {
         "message": "User created successfully",
         "user": created_user,
+        "access_token": token,
     }
 
 
@@ -276,7 +277,7 @@ def login(data: LoginRequest, response: Response):
     safe_user = dict(user.data)
     safe_user.pop("passwordhash", None)
 
-    return {"user": safe_user}
+    return {"user": safe_user, "access_token": token}
 
 
 @router.post("/logout")
