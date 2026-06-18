@@ -130,6 +130,19 @@ All routers are registered in `app/main.py`. Each file in `app/controllers/` is 
 
 **`send_push` helper** (importable by other controllers): persists a row to `notifications`, then sends Web Push via `pywebpush` to all device subscriptions for the user. Automatically cleans up expired subscriptions (HTTP 410/404 responses).
 
+#### `SettingsController` — `/SettingsController`
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/getSettings` | Yes | Notification + privacy preferences |
+| POST | `/changePassword` | Yes | Verify current password, set a new one (min 8 chars) |
+| POST | `/updateNotificationPreferences` | Yes | Update the three `notify_*` booleans |
+| POST | `/updatePrivacySettings` | Yes | Update `profile_visible` / `allow_messages_from` |
+| GET | `/exportData` | Yes | Returns the current user's full data as one JSON document: profile (minus `passwordhash`), highlights, tags, sections, work experience, projects, job/people actions, sent messages, notifications |
+| POST | `/deleteAccount` | Yes | Verifies `password`, then permanently deletes the account and all rows owned by it (see below), clears the auth cookie |
+
+**Account deletion** (`delete_account`) removes, in dependency order (children before parent, no FK cascade assumed): `message_reactions`, `messages` (where `sender_id`), `conversation_participants`, `user_job_actions`, `user_people_actions` (both `user_id` and `people_id` sides), `blocked_users` (both directions), `user_reports` (both directions), `notifications`, `push_subscriptions`, `people_section_items` → `people_sections`, `people_highlights`, `people_tags`, `people_work_experience`, `people_projects`, then the `people` row itself. **Deliberately left untouched:** any `companies`/`jobs` rows the user created — those can hold other people's data (applicants, teammates) and aren't solely this account's personal data, so deletion doesn't cascade into them.
+
 ### Services
 
 `app/services/service.py` — `UploadImageKey()` scrapes a session token from ImgBB. Called by `ProfileController.uploadImage`.

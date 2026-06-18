@@ -1,11 +1,12 @@
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, Response
 from pydantic import BaseModel
 from typing import Literal
+from datetime import datetime, timezone
 import bcrypt
 import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
-from app.auth_utils import get_current_user_row
+from app.auth_utils import get_current_user_row, clear_auth_cookie
 
 load_dotenv()
 
@@ -35,6 +36,10 @@ class NotificationPrefsRequest(BaseModel):
 class PrivacySettingsRequest(BaseModel):
     profile_visible: bool
     allow_messages_from: Literal["all", "connections", "none"]
+
+
+class DeleteAccountRequest(BaseModel):
+    password: str
 
 
 @router.get("/getSettings")
@@ -81,3 +86,90 @@ def update_privacy_settings(request: PrivacySettingsRequest, user: dict = Depend
     }).eq("id", user["id"]).execute()
 
     return {"message": "Privacy settings updated"}
+
+
+@router.get("/exportData")
+def export_data(user: dict = Depends(get_current_user)):
+    """Everything Denoisr holds about the current user, as one JSON document."""
+    person_id = user["id"]
+
+    profile = dict(user)
+    profile.pop("passwordhash", None)
+
+    highlights = supabase.table("people_highlights").select("highlight").eq("person_id", person_id).execute()
+    tags = supabase.table("people_tags").select("tag").eq("person_id", person_id).execute()
+
+    sections_res = supabase.table("people_sections").select("id, title").eq("person_id", person_id).execute()
+    sections = []
+    for sec in (sections_res.data or []):
+        items = supabase.table("people_section_items").select("item").eq("section_id", sec["id"]).execute()
+        sections.append({"title": sec["title"], "items": [i["item"] for i in (items.data or [])]})
+
+    work_experience = supabase.table("people_work_experience") \
+        .select("company, role, duration, description").eq("person_id", person_id).execute()
+    projects = supabase.table("people_projects") \
+        .select("name, url, description").eq("person_id", person_id).execute()
+
+    job_actions = supabase.table("user_job_actions") \
+        .select("job_id, action, status, created_at").eq("user_id", person_id).execute()
+    people_actions = supabase.table("user_people_actions") \
+        .select("people_id, action, created_at").eq("user_id", person_id).execute()
+
+    sent_messages = supabase.table("messages") \
+        .select("conversation_id, content, created_at").eq("sender_id", person_id).execute()
+
+    notifications = supabase.table("notifications") \
+        .select("type, title, body, created_at, read").eq("user_id", person_id).execute()
+
+    return {
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "profile": profile,
+        "highlights": [h["highlight"] for h in (highlights.data or [])],
+        "tags": [t["tag"] for t in (tags.data or [])],
+        "sections": sections,
+        "workExperience": work_experience.data or [],
+        "projects": projects.data or [],
+        "jobActions": job_actions.data or [],
+        "peopleActions": people_actions.data or [],
+        "sentMessages": sent_messages.data or [],
+        "notifications": notifications.data or [],
+    }
+
+
+@router.post("/deleteAccount")
+def delete_account(request: DeleteAccountRequest, response: Response, user: dict = Depends(get_current_user)):
+    if not bcrypt.checkpw(request.password.encode(), user["passwordhash"].encode()):
+        raise HTTPException(status_code=400, detail="Password is incorrect")
+
+    person_id = user["id"]
+
+    # Children before parent — no guaranteed FK cascade in this schema, so
+    # delete in dependency order. Posted companies/jobs are deliberately left
+    # alone: they can be shared business data (other applicants, teammates),
+    # not solely this account's personal data.
+    supabase.table("message_reactions").delete().eq("user_id", person_id).execute()
+    supabase.table("messages").delete().eq("sender_id", person_id).execute()
+    supabase.table("conversation_participants").delete().eq("user_id", person_id).execute()
+    supabase.table("user_job_actions").delete().eq("user_id", person_id).execute()
+    supabase.table("user_people_actions").delete().eq("user_id", person_id).execute()
+    supabase.table("user_people_actions").delete().eq("people_id", person_id).execute()
+    supabase.table("blocked_users").delete().eq("blocker_id", person_id).execute()
+    supabase.table("blocked_users").delete().eq("blocked_id", person_id).execute()
+    supabase.table("user_reports").delete().eq("reporter_id", person_id).execute()
+    supabase.table("user_reports").delete().eq("reported_id", person_id).execute()
+    supabase.table("notifications").delete().eq("user_id", person_id).execute()
+    supabase.table("push_subscriptions").delete().eq("user_id", person_id).execute()
+
+    sections = supabase.table("people_sections").select("id").eq("person_id", person_id).execute()
+    for sec in (sections.data or []):
+        supabase.table("people_section_items").delete().eq("section_id", sec["id"]).execute()
+    supabase.table("people_sections").delete().eq("person_id", person_id).execute()
+    supabase.table("people_highlights").delete().eq("person_id", person_id).execute()
+    supabase.table("people_tags").delete().eq("person_id", person_id).execute()
+    supabase.table("people_work_experience").delete().eq("person_id", person_id).execute()
+    supabase.table("people_projects").delete().eq("person_id", person_id).execute()
+
+    supabase.table("people").delete().eq("id", person_id).execute()
+
+    clear_auth_cookie(response)
+    return {"message": "Account deleted"}
