@@ -1,7 +1,6 @@
-from fastapi import APIRouter, HTTPException, status, Depends
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import APIRouter, HTTPException, status, Depends, Request, Response
 from pydantic import BaseModel, EmailStr
-from jose import jwt, JWTError
+from jose import jwt
 from datetime import datetime, timedelta
 import bcrypt
 import os
@@ -11,6 +10,7 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 from typing import Dict, Any
 from app.services.service import UploadImageKey
+from app.auth_utils import get_current_user_row, set_auth_cookie, clear_auth_cookie
 from apify_client import ApifyClient
 from google import genai
 
@@ -37,11 +37,6 @@ router = APIRouter(prefix="/LoginController", tags=["Login"])
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 10080
-
-# --------------------------
-# OAuth2
-# --------------------------
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/LoginController/login")
 
 # --------------------------
 # Models (UPDATED for your payload)
@@ -125,23 +120,8 @@ def run_sql_script(script_name: str, context: dict):
 # --------------------------
 # Get current user
 # --------------------------
-def get_current_user(token: str = Depends(oauth2_scheme)):
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email = payload.get("sub")
-
-        if not email:
-            raise HTTPException(status_code=401, detail="Invalid token")
-
-        user = supabase.table("users").select("*").eq("email", email).single().execute()
-
-        if not user.data:
-            raise HTTPException(status_code=401, detail="User not found")
-
-        return user.data
-
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+def get_current_user(request: Request):
+    return get_current_user_row(request, supabase)
 
 
 # --------------------------
@@ -149,7 +129,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 # --------------------------
 
 @router.post("/signup", status_code=201)
-def signup(user: UserCreate):
+def signup(user: UserCreate, response: Response):
 
     # 1. Check if user exists in new People schema
     existing = supabase.table("people") \
@@ -253,16 +233,19 @@ def signup(user: UserCreate):
 
     token_sub = person_id if person_id else user_id
     token = create_access_token({"sub": token_sub})
+    set_auth_cookie(response, token)
+
+    created_user = dict(insert.data[0])
+    created_user.pop("passwordhash", None)
 
     return {
         "message": "User created successfully",
-        "user": insert.data[0],
-        "access_token": token
+        "user": created_user,
     }
 
 
 @router.post("/login")
-def login(data: LoginRequest):
+def login(data: LoginRequest, response: Response):
 
     user = supabase.table("people") \
         .select("*") \
@@ -277,17 +260,24 @@ def login(data: LoginRequest):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = create_access_token({"sub": user.data["id"]})
+    set_auth_cookie(response, token)
 
-    return {
-        "access_token": token,
-        "token_type": "bearer"
-    }
+    safe_user = dict(user.data)
+    safe_user.pop("passwordhash", None)
+
+    return {"user": safe_user}
+
+
+@router.post("/logout")
+def logout(response: Response):
+    clear_auth_cookie(response)
+    return {"message": "Logged out"}
 
 
 @router.get("/profile")
 def profile(current_user: dict = Depends(get_current_user)):
     return {
-        "message": f"Welcome {current_user['email']}",
+        "message": f"Welcome {current_user['emailaddress']}",
         "user": current_user
     }
 

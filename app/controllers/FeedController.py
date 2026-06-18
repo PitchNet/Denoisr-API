@@ -1,7 +1,5 @@
-from fastapi import APIRouter, HTTPException, status, Depends
-from fastapi.security import OAuth2PasswordBearer, HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, EmailStr
-from jose import jwt, JWTError
 from datetime import datetime, timedelta
 import bcrypt
 import os
@@ -10,11 +8,11 @@ from supabase import create_client, Client
 from typing import List, Dict, Any
 from collections import defaultdict
 from app.controllers.NotificationController import send_push
+from app.auth_utils import get_current_user_row
 # --------------------------
 # Load ENV
 # --------------------------
 load_dotenv()
-security = HTTPBearer()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -29,40 +27,14 @@ router = APIRouter(prefix="/FeedController", tags=["Feed"])
 # --------------------------
 # Config
 # --------------------------
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
 FETCH_BATCH_SIZE = int(os.getenv("FETCH_BATCH_SIZE", "10"))
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 
 # --------------------------
 # Helper Methods
 # --------------------------
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    token = credentials.credentials
-
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        subject = payload.get("sub")  # Could be emailaddress or id
-
-        if not subject:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token: subject missing"
-            )
-
-        user = supabase.table("people").select("*").eq("id", subject).single().execute()
-
-        if not user.data:
-            raise HTTPException(status_code=401, detail="User not found")
-
-        return user.data
-
-    except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token"
-        )
+def get_current_user(request: Request):
+    return get_current_user_row(request, supabase)
 
 
 # --------------------------

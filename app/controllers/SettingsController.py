@@ -1,39 +1,24 @@
-from fastapi import APIRouter, HTTPException, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
-from jose import jwt, JWTError
 from typing import Literal
 import bcrypt
 import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
+from app.auth_utils import get_current_user_row
 
 load_dotenv()
-security = HTTPBearer()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
-ALGORITHM = "HS256"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 router = APIRouter(prefix="/SettingsController", tags=["Settings"])
 
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    token = credentials.credentials
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        subject = payload.get("sub")
-        if not subject:
-            raise HTTPException(status_code=401, detail="Invalid token: subject missing")
-        user = supabase.table("people").select("*").eq("id", subject).single().execute()
-        if not user.data:
-            raise HTTPException(status_code=401, detail="User not found")
-        return user.data
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+def get_current_user(request: Request):
+    return get_current_user_row(request, supabase)
 
 
 class ChangePasswordRequest(BaseModel):

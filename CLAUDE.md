@@ -29,12 +29,16 @@ python3 -m py_vapid
 | `VAPID_PRIVATE_KEY` | VAPID private key for Web Push |
 | `VAPID_CLAIM_EMAIL` | Contact email in VAPID claims (default: `notifications@denoisr.com`) |
 | `FETCH_BATCH_SIZE` | Default page size for feed queries (default: `10`) |
+| `COOKIE_SECURE` | `Secure` flag on the auth cookie (default: `true`; set `false` for plain-HTTP local dev) |
+| `COOKIE_SAMESITE` | `SameSite` attribute on the auth cookie (default: `none`, required for the cross-site Vercel↔Render setup; use `lax` if UI and API share a host locally) |
 
 ## Architecture
 
 ### Auth
 
-JWT (HS256). Token subject (`sub`) is the `people.id` UUID. All protected endpoints use `HTTPBearer` via `Depends(get_current_user)` — each controller defines its own local copy of `get_current_user` that looks up the user from `supabase.table("people")`. Token lifetime: 7 days (10080 minutes).
+JWT (HS256), subject (`sub`) is the `people.id` UUID, 7-day lifetime (10080 minutes). The token is issued as an **httpOnly** cookie (`denoisr_auth_token`, see `app/auth_utils.py`) via `Set-Cookie` on `/LoginController/login` and `/LoginController/signup` — it is never returned in a JSON body, so browser-side JS (and therefore XSS) can't read it.
+
+All protected endpoints depend on a local `get_current_user(request: Request)` that delegates to `auth_utils.get_current_user_row(request, supabase)`, which reads the token from the `denoisr_auth_token` cookie (falling back to an `Authorization: Bearer` header for non-browser clients) and looks up the user from `supabase.table("people")`. `POST /LoginController/logout` clears the cookie — call it on client-side logout, since JS can't clear an httpOnly cookie itself.
 
 ### Controllers
 
@@ -44,8 +48,9 @@ All routers are registered in `app/main.py`. Each file in `app/controllers/` is 
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/signup` | No | Create account, insert profile + related rows, return JWT |
-| POST | `/login` | No | Verify bcrypt password, return JWT |
+| POST | `/signup` | No | Create account, insert profile + related rows, set the httpOnly JWT cookie, return `{ user }` (no token, no passwordhash) |
+| POST | `/login` | No | Verify bcrypt password, set the httpOnly JWT cookie, return `{ user }` (no token) |
+| POST | `/logout` | No | Clear the httpOnly JWT cookie |
 | GET | `/keepAlive` | No | Health-check ping |
 | POST | `/linkedinImport` | No | Scrape LinkedIn via Apify → restructure with Gemini → return pre-filled profile JSON |
 | GET | `/profile` | Yes | Legacy endpoint; returns current user info |

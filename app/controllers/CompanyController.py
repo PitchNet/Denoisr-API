@@ -1,15 +1,13 @@
-from fastapi import APIRouter, HTTPException, status, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import jwt, JWTError
+from fastapi import APIRouter, HTTPException, Depends, Request
 import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from typing import List, Dict, Any
 from datetime import datetime, timezone
 from app.controllers.NotificationController import send_push
+from app.auth_utils import get_current_user_row
 
 load_dotenv()
-security = HTTPBearer()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -18,35 +16,9 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 router = APIRouter(prefix="/CompanyController", tags=["Company"])
 
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
-ALGORITHM = "HS256"
 
-
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    token = credentials.credentials
-
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        subject = payload.get("sub")
-
-        if not subject:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token: subject missing"
-            )
-
-        user = supabase.table("people").select("*").eq("id", subject).single().execute()
-
-        if not user.data:
-            raise HTTPException(status_code=401, detail="User not found")
-
-        return user.data
-
-    except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token"
-        )
+def get_current_user(request: Request):
+    return get_current_user_row(request, supabase)
 
 
 @router.post("/companyDetails")
