@@ -426,6 +426,8 @@ def job_applicants(payload: Dict[str, Any], user: dict = Depends(get_current_use
                 "sections": sections,
                 "workExperience": work_experience,
                 "projects": projects,
+                "resume": p.get("resume_url") or "",
+                "resumeFilename": p.get("resume_filename") or "",
                 "appliedDate": _relative_time(created_map.get(uid, "")),
                 "status": status_map.get(uid, "new")
             })
