@@ -339,37 +339,7 @@ def keepAlive():
     return ("Hi!")
 
 
-@router.post("/linkedinImport")
-def linkedin_import(payload: Dict[str, Any]):
-    try:
-        url = payload.get("url")
-        if not url:
-            raise HTTPException(status_code=400, detail="LinkedIn URL is required")
-
-        if not APIFY_TOKEN:
-            raise HTTPException(status_code=500, detail="APIFY_TOKEN not configured")
-        if not GOOGLE_API_KEY:
-            raise HTTPException(status_code=500, detail="GOOGLE_API_KEY not configured")
-
-        # Step 1: Scrape LinkedIn via Apify
-        apify = ApifyClient(APIFY_TOKEN)
-
-        run_input = {
-            "profileScraperMode": "Profile details no email ($4 per 1k)",
-            "queries": [url],
-        }
-
-        run = apify.actor("LpVuK3Zozwuipa5bp").call(run_input=run_input)
-
-        linkedin_data = []
-        profile_picture = None
-        for item in apify.dataset(run.default_dataset_id).iterate_items():
-            linkedin_data.append(item)
-            if not profile_picture:
-                profile_picture = item.get("profilePicture") or item.get("profilePic") or item.get("photo")
-
-        # Step 2: Ask Gemma to restructure into signup format
-        prompt = f"""You are given LinkedIn profile data. Restructure it into the exact JSON format shown below. Do not include any text outside the JSON. Return ONLY valid JSON.
+LINKEDIN_IMPORT_PROMPT_TEMPLATE = """You are given LinkedIn profile data. Restructure it into the exact JSON format shown below. Do not include any text outside the JSON. Return ONLY valid JSON.
 
 Example output:
 {{
@@ -396,23 +366,122 @@ Example output:
 Now restructure this LinkedIn data:
 {linkedin_data}"""
 
-        gemini_client = genai.Client(api_key=GOOGLE_API_KEY)
-        response = gemini_client.models.generate_content(
-            model="gemma-4-31b-it",
-            contents=prompt,
-        )
 
-        text = response.text.strip()
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-        result = json.loads(text)
+def _cleanup_old_linkedin_import_jobs():
+    try:
+        cutoff = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+        supabase.table("linkedin_import_jobs").delete().lt("created_at", cutoff).execute()
+    except Exception:
+        pass
 
-        if profile_picture and not result.get("photo"):
-            result["photo"] = profile_picture
+
+def _run_gemini_restructure(linkedin_data, profile_picture):
+    prompt = LINKEDIN_IMPORT_PROMPT_TEMPLATE.format(linkedin_data=linkedin_data)
+
+    gemini_client = genai.Client(api_key=GOOGLE_API_KEY)
+    response = gemini_client.models.generate_content(
+        model="gemma-4-31b-it",
+        contents=prompt,
+    )
+
+    text = response.text.strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    result = json.loads(text)
+
+    if profile_picture and not result.get("photo"):
+        result["photo"] = profile_picture
+
+    return result
+
+
+@router.post("/linkedinImport/scrape")
+def linkedin_import_scrape(payload: Dict[str, Any]):
+    try:
+        url = payload.get("url")
+        if not url:
+            raise HTTPException(status_code=400, detail="LinkedIn URL is required")
+
+        if not APIFY_TOKEN:
+            raise HTTPException(status_code=500, detail="APIFY_TOKEN not configured")
+        if not GOOGLE_API_KEY:
+            raise HTTPException(status_code=500, detail="GOOGLE_API_KEY not configured")
+
+        # Scrape LinkedIn via Apify
+        apify = ApifyClient(APIFY_TOKEN)
+
+        run_input = {
+            "profileScraperMode": "Profile details no email ($4 per 1k)",
+            "queries": [url],
+        }
+
+        run = apify.actor("LpVuK3Zozwuipa5bp").call(run_input=run_input)
+
+        linkedin_data = []
+        profile_picture = None
+        for item in apify.dataset(run.default_dataset_id).iterate_items():
+            linkedin_data.append(item)
+            if not profile_picture:
+                profile_picture = item.get("profilePicture") or item.get("profilePic") or item.get("photo")
+
+        inserted = supabase.table("linkedin_import_jobs").insert({
+            "linkedin_url": url,
+            "status": "scraped",
+            "raw_data": linkedin_data,
+            "profile_picture": profile_picture,
+        }).execute()
+
+        import_id = inserted.data[0]["id"]
+
+        _cleanup_old_linkedin_import_jobs()
+
+        return {"importId": import_id, "profilePicture": profile_picture}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"linkedin_import_scrape: {type(e).__name__}: {e}")
+
+
+@router.post("/linkedinImport/structure")
+def linkedin_import_structure(payload: Dict[str, Any]):
+    try:
+        import_id = payload.get("importId")
+        if not import_id:
+            raise HTTPException(status_code=400, detail="importId is required")
+
+        if not GOOGLE_API_KEY:
+            raise HTTPException(status_code=500, detail="GOOGLE_API_KEY not configured")
+
+        rows = supabase.table("linkedin_import_jobs").select("*").eq("id", import_id).execute().data
+        if not rows:
+            raise HTTPException(status_code=404, detail="Import not found or expired, please re-scrape")
+
+        row = rows[0]
+
+        if row["status"] == "structured" and row.get("result"):
+            return row["result"]
+
+        try:
+            result = _run_gemini_restructure(row["raw_data"], row.get("profile_picture"))
+        except Exception as e:
+            supabase.table("linkedin_import_jobs").update({
+                "status": "failed",
+                "error": f"{type(e).__name__}: {e}",
+                "attempt_count": row.get("attempt_count", 0) + 1,
+                "updated_at": datetime.utcnow().isoformat(),
+            }).eq("id", import_id).execute()
+            raise HTTPException(status_code=502, detail=f"linkedin_import_structure: {type(e).__name__}: {e}")
+
+        supabase.table("linkedin_import_jobs").update({
+            "status": "structured",
+            "result": result,
+            "updated_at": datetime.utcnow().isoformat(),
+        }).eq("id", import_id).execute()
 
         return result
 
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"linkedin_import: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"linkedin_import_structure: {type(e).__name__}: {e}")

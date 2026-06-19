@@ -63,10 +63,11 @@ All routers are registered in `app/main.py`. Each file in `app/controllers/` is 
 | POST | `/forgotPassword` | No | Emails a reset link if `RESEND_API_KEY` is set (generic response either way, doesn't reveal whether the account exists); otherwise returns the reset token directly in the response so the UI can skip straight to the reset screen — see the security note above |
 | POST | `/resetPassword` | No | Consumes a reset token (`{ token, newPassword }`) and updates `passwordhash` |
 | GET | `/keepAlive` | No | Health-check ping |
-| POST | `/linkedinImport` | No | Scrape LinkedIn via Apify → restructure with Gemini → return pre-filled profile JSON |
+| POST | `/linkedinImport/scrape` | No | Scrape LinkedIn via Apify, persist the raw result, return `{ importId, profilePicture }` |
+| POST | `/linkedinImport/structure` | No | Restructure a previously-scraped `importId`'s raw data with Gemini; returns pre-filled profile JSON. Idempotent if already structured; retryable on its own if Gemini fails (no re-scrape needed) |
 | GET | `/profile` | Yes | Legacy endpoint; returns current user info |
 
-**LinkedIn import flow:** Apify actor `LpVuK3Zozwuipa5bp` scrapes the profile. Raw data is sent to `gemma-4-31b-it` with a structured prompt that outputs the Denoisr signup JSON format. The result is returned to the UI to pre-fill the signup form — no data is persisted by this endpoint.
+**LinkedIn import flow:** split into two steps so the paid Apify scrape isn't re-billed if the Gemini restructuring step fails. `/linkedinImport/scrape` calls Apify actor `LpVuK3Zozwuipa5bp` and writes a row to `linkedin_import_jobs` (`raw_data`, `profile_picture`, `status='scraped'`), returning only an `importId` to the client. `/linkedinImport/structure` looks up that row, sends `raw_data` to `gemma-4-31b-it` with a structured prompt, and on success updates the row (`status='structured'`, `result=...`) before returning the JSON to pre-fill the signup form. On Gemini failure the row is marked `status='failed'` but `raw_data` is kept, so the client can call `/structure` again with the same `importId` without re-invoking Apify. Rows older than 24h are opportunistically deleted whenever a new scrape is inserted (no cron). See `app/scripts/005_create_linkedin_import_jobs.sql` for the table DDL (run once via the Supabase SQL editor).
 
 #### `FeedController` — `/FeedController`
 
@@ -177,6 +178,7 @@ Tables inferred from queries — source of truth is `../Denoisr-DB/DDL/`.
 | `messages` | `id`, `conversation_id`, `sender_id`, `content`, `created_at` |
 | `push_subscriptions` | `id`, `user_id`, `endpoint`, `p256dh_key`, `auth_key` |
 | `notifications` | `id`, `user_id`, `type`, `title`, `body`, `data`, `read`, `created_at` |
+| `linkedin_import_jobs` | `id`, `linkedin_url`, `status` (`scraped`/`structured`/`failed`), `raw_data`, `profile_picture`, `result`, `error`, `attempt_count`, `created_at`, `updated_at` |
 
 ## Third-party integrations
 
