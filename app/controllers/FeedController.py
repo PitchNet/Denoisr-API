@@ -165,7 +165,7 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
                 .execute()
             bookmark_ids = [b["people_id"] for b in (bookmark_res.data or [])]
             if not bookmark_ids:
-                return []
+                return {"items": [], "next_cursor": None, "has_more": False, "total_count": 0}
             query = query.in_("id", bookmark_ids)
         else:
             interactions = supabase.table("user_people_actions") \
@@ -212,23 +212,23 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
             for r in (main_res.data or []):
                 search_ids.add(r["id"])
 
-            hl_res = supabase.table("people_highlights").select("people_id").ilike("highlight", f"%{q}%").execute()
+            hl_res = supabase.table("people_highlights").select("person_id").ilike("highlight", f"%{q}%").execute()
             for r in (hl_res.data or []):
-                search_ids.add(r["people_id"])
+                search_ids.add(r["person_id"])
 
-            tag_res = supabase.table("people_tags").select("people_id").ilike("tag", f"%{q}%").execute()
+            tag_res = supabase.table("people_tags").select("person_id").ilike("tag", f"%{q}%").execute()
             for r in (tag_res.data or []):
-                search_ids.add(r["people_id"])
+                search_ids.add(r["person_id"])
 
             item_res = supabase.table("people_section_items").select("section_id").ilike("item", f"%{q}%").execute()
             sec_ids_with_match = [r["section_id"] for r in (item_res.data or [])]
             if sec_ids_with_match:
                 sec_res = supabase.table("people_sections").select("person_id").in_("id", sec_ids_with_match).execute()
                 for r in (sec_res.data or []):
-                    search_ids.add(r["people_id"])
+                    search_ids.add(r["person_id"])
 
             if not search_ids:
-                return []
+                return {"items": [], "next_cursor": None, "has_more": False, "total_count": 0}
             query = query.in_("id", list(search_ids))
 
         if role:
@@ -590,7 +590,7 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
                     search_ids.add(r["job_id"])
 
             if not search_ids:
-                return []
+                return {"items": [], "next_cursor": None, "has_more": False, "total_count": 0}
             query = query.in_("id", list(search_ids))
 
         # Role → search in headline + subheadline + intro
@@ -635,7 +635,7 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
         # Filter to bookmarked only
         if bookmarked:
             if not bookmark_ids:
-                return []
+                return {"items": [], "next_cursor": None, "has_more": False, "total_count": 0}
             query = query.in_("id", bookmark_ids)
 
         # Count total matching rows (before cursor/limit)
