@@ -82,6 +82,7 @@ All routers are registered in `app/main.py`. Each file in `app/controllers/` is 
 | POST | `/sendMessage` | Yes | Send a message in a conversation (creates conversation if needed) |
 | POST | `/getMessages` | Yes | Fetch messages for a conversation (by `conversationId` or `recipientId`) |
 | GET | `/jobApplications` | Yes | All jobs the current user has swiped right on, with status |
+| POST | `/withdrawJobApplication` | Yes | Candidate withdraws their own application: `{ jobId }`, sets `user_job_actions.status = "withdrawn"`. 400s if the application isn't in a withdrawable status (`new`/`submitted`/`reviewing`/`shortlisted` only — not once `messaged`/`hired`/`passed`/`withdrawn`) |
 | POST | `/InsertJobs` | No | Bulk-insert jobs with highlights, tags, sections (admin/seed use) |
 | POST | `/InsertPeople` | No | Bulk-insert people profiles (admin/seed use) |
 

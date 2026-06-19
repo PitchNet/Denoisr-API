@@ -802,6 +802,42 @@ def job_applications(user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=f"job_applications: {type(e).__name__}: {e}")
 
 
+WITHDRAWABLE_STATUSES = {"new", "submitted", "reviewing", "shortlisted"}
+
+
+@router.post("/withdrawJobApplication")
+def withdraw_job_application(payload: Dict[str, str], user: dict = Depends(get_current_user)):
+    job_id = payload.get("jobId")
+    if not job_id:
+        raise HTTPException(status_code=400, detail="Missing jobId")
+
+    try:
+        current = supabase.table("user_job_actions") \
+            .select("status") \
+            .eq("job_id", job_id) \
+            .eq("user_id", user["id"]) \
+            .execute()
+
+        if not current.data:
+            raise HTTPException(status_code=404, detail="Application not found")
+
+        current_status = current.data[0].get("status") or "new"
+        if current_status not in WITHDRAWABLE_STATUSES:
+            raise HTTPException(status_code=400, detail="Application can no longer be withdrawn")
+
+        supabase.table("user_job_actions") \
+            .update({"status": "withdrawn"}) \
+            .eq("job_id", job_id) \
+            .eq("user_id", user["id"]) \
+            .execute()
+
+        return {"message": "Application withdrawn"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"withdraw_job_application: {type(e).__name__}: {e}")
+
+
 @router.post("/jobAction")
 def accept_job(payload: Dict[str, str], user: str = Depends(get_current_user)):
 
