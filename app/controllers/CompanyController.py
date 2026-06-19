@@ -82,6 +82,8 @@ def get_company(user: dict = Depends(get_current_user)):
                 "yearFounded": c.get("year_founded"),
                 "tags": c.get("tags") or [],
                 "commitments": c.get("commitments"),
+                "verificationStatus": c.get("verification_status"),
+                "verificationNotes": c.get("verification_notes"),
             }
         }
 

@@ -1,6 +1,6 @@
 import os
 from fastapi import FastAPI
-from app.controllers import LoginController, FeedController, ProfileController, CompanyController, NotificationController, SettingsController
+from app.controllers import LoginController, FeedController, ProfileController, CompanyController, NotificationController, SettingsController, AdminController
 from fastapi.middleware.cors import CORSMiddleware
 from db import supabase
 
@@ -23,3 +23,4 @@ app.include_router(ProfileController.router)
 app.include_router(CompanyController.router)
 app.include_router(NotificationController.router)
 app.include_router(SettingsController.router)
+app.include_router(AdminController.router)

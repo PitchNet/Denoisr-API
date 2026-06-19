@@ -525,7 +525,7 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
                 title,
                 job_section_items(item)
             ),
-            companies!company_id(name, photo)
+            companies!company_id(name, photo, verification_status)
         """)
 
         role = filters.get("role")
@@ -706,6 +706,7 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
                 "headline": job.get("headline"),
                 "subheadline": job.get("companies", {}).get("name") if isinstance(job.get("companies"), dict) else job.get("subheadline"),
                 "companyPhoto": job.get("companies", {}).get("photo") if isinstance(job.get("companies"), dict) else None,
+                "companyVerified": (job.get("companies", {}).get("verification_status") == "verified") if isinstance(job.get("companies"), dict) else False,
                 "organization": job.get("organization"),
                 "location": job.get("location"),
                 "experience": job.get("experience"),

@@ -78,6 +78,14 @@ def get_current_user_row(request: Request, supabase: Client) -> dict:
     return user.data
 
 
+def is_admin(user: dict) -> bool:
+    """Crude allowlist gate: no roles table, just a comma-separated list of
+    people.id values in ADMIN_USER_IDS. Good enough until there's an actual
+    need for more than a couple of trusted reviewers."""
+    admin_ids = {uid.strip() for uid in os.getenv("ADMIN_USER_IDS", "").split(",") if uid.strip()}
+    return str(user.get("id")) in admin_ids
+
+
 def create_reset_token(user_id: str, password_hash: str) -> str:
     """A short-lived, single-use password-reset token. No DB column needed:
     binding it to a fragment of the current password hash means the token

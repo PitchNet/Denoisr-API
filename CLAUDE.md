@@ -34,6 +34,7 @@ python3 -m py_vapid
 | `FRONTEND_BASE_URL` | Base URL used to build the password-reset link emailed to users (default: `http://localhost:5173`; set to the deployed UI origin in production) |
 | `RESEND_API_KEY` | API key for [Resend](https://resend.com), used to send password-reset emails. **If unset, `/forgotPassword` skips email entirely and returns the reset token directly in its JSON response** so the UI can jump straight to the "set a new password" screen — see the security note under Auth below before relying on this in production |
 | `RESEND_FROM_EMAIL` | `From` address for reset emails (default: `Denoisr <onboarding@resend.dev>`, Resend's shared sandbox sender — replace with a verified domain sender in production) |
+| `ADMIN_USER_IDS` | Comma-separated `people.id` UUIDs allowed to use `/AdminController` endpoints. No roles table — this is the entire admin model (see `auth_utils.is_admin`) |
 
 ## Architecture
 
@@ -117,6 +118,18 @@ All routers are registered in `app/main.py`. Each file in `app/controllers/` is 
 
 **Applicant status pipeline:** `new` → `submitted` → `reviewing` → `shortlisted` → `messaged` → `hired` / `passed`
 
+**Company verification:** new companies default to `companies.verification_status = 'unverified'` (DB column default, no app code sets it). Verification doesn't block job posting — it only drives the "Unverified" badge in the UI. Reviewed by an admin via `AdminController`, below.
+
+#### `AdminController` — `/AdminController`
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/isAdmin` | Yes | Returns `{ isAdmin }` for the current user — lets the UI decide whether to show admin nav, not itself a security boundary |
+| GET | `/pendingCompanies` | Admin | List companies by `verification_status` (query param `status`, default `unverified`) |
+| POST | `/reviewCompany` | Admin | `{ companyId, decision: "verified" \| "rejected", notes? }` — updates the company's verification fields and pushes a notification to its owner |
+
+**Admin model:** there's no roles table — `auth_utils.is_admin(user)` just checks `user["id"]` against the comma-separated `ADMIN_USER_IDS` env var. `require_admin` (local to `AdminController.py`) is the dependency that 403s non-admins on the two gated routes above.
+
 #### `NotificationController` — `/NotificationController`
 
 | Method | Path | Auth | Description |
@@ -170,7 +183,7 @@ Tables inferred from queries — source of truth is `../Denoisr-DB/DDL/`.
 | `job_tags` | `job_id`, `tag` |
 | `job_sections` | `id`, `job_id`, `title` |
 | `job_section_items` | `section_id`, `item` |
-| `companies` | `id`, `name`, `photo`, `website`, `size`, `address`, `description`, `phone`, `year_founded`, `tags`, `commitments` |
+| `companies` | `id`, `name`, `photo`, `website`, `size`, `address`, `description`, `phone`, `year_founded`, `tags`, `commitments`, `verification_status` (`unverified`/`verified`/`rejected`, default `unverified`), `verification_notes`, `verified_at`, `verified_by` |
 | `user_job_actions` | `user_id`, `job_id`, `action` (`"accepted"` / `"bookmark"`), `status` |
 | `user_people_actions` | `user_id`, `people_id`, `action` (`"sent"` / `"connected"` / `"bookmark"`) |
 | `conversations` | `id`, `updated_at` |
