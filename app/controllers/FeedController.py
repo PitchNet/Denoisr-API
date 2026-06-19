@@ -719,6 +719,8 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
                 "experience": job.get("experience"),
                 "salary": job.get("salary"),
                 "intro": job.get("intro"),
+                "jobDescriptionUrl": job.get("job_description_url"),
+                "jobDescriptionFilename": job.get("job_description_filename"),
 
                 "highlights": [
                     h["highlight"] for h in job.get("job_highlights", [])
