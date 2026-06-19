@@ -574,6 +574,13 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
             for r in (main_res.data or []):
                 search_ids.add(r["id"])
 
+            company_res = supabase.table("companies").select("id").ilike("name", f"%{q}%").execute()
+            company_ids = [c["id"] for c in (company_res.data or [])]
+            if company_ids:
+                company_jobs_res = supabase.table("jobs").select("id").in_("company_id", company_ids).execute()
+                for r in (company_jobs_res.data or []):
+                    search_ids.add(r["id"])
+
             hl_res = supabase.table("job_highlights").select("job_id").ilike("highlight", f"%{q}%").execute()
             for r in (hl_res.data or []):
                 search_ids.add(r["job_id"])
