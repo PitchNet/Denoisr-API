@@ -1338,7 +1338,7 @@ def get_messages(payload: Dict[str, str], user: dict = Depends(get_current_user)
             return {"messages": [], "otherReadAt": None}
 
         messages_res = supabase.table("messages") \
-            .select("id, sender_id, content, created_at, message_reactions(id, user_id, emoji)") \
+            .select("id, sender_id, content, created_at, edited_at, deleted_at, message_reactions(id, user_id, emoji)") \
             .eq("conversation_id", conversation_id) \
             .order("created_at") \
             .execute()
@@ -1415,3 +1415,57 @@ def react_to_message(payload: Dict[str, Any], user: dict = Depends(get_current_u
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"react_to_message: {type(e).__name__}: {e}")
+
+
+@router.post("/editMessage")
+def edit_message(payload: Dict[str, str], user: dict = Depends(get_current_user)):
+    message_id = payload.get("messageId")
+    content = payload.get("content")
+    if not message_id or not content:
+        raise HTTPException(status_code=400, detail="Missing messageId or content")
+    try:
+        msg = supabase.table("messages").select("sender_id, deleted_at") \
+            .eq("id", message_id).maybe_single().execute()
+        if not msg or not msg.data:
+            raise HTTPException(status_code=404, detail="Message not found")
+        if msg.data["sender_id"] != user["id"]:
+            raise HTTPException(status_code=403, detail="You can only edit your own messages")
+        if msg.data.get("deleted_at"):
+            raise HTTPException(status_code=400, detail="Can't edit a deleted message")
+
+        updated = supabase.table("messages").update({
+            "content": content,
+            "edited_at": datetime.utcnow().isoformat(),
+        }).eq("id", message_id).execute()
+
+        return {"success": True, "msg": updated.data[0] if updated.data else None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"edit_message: {type(e).__name__}: {e}")
+
+
+@router.post("/deleteMessage")
+def delete_message(payload: Dict[str, str], user: dict = Depends(get_current_user)):
+    message_id = payload.get("messageId")
+    if not message_id:
+        raise HTTPException(status_code=400, detail="Missing messageId")
+    try:
+        msg = supabase.table("messages").select("sender_id") \
+            .eq("id", message_id).maybe_single().execute()
+        if not msg or not msg.data:
+            raise HTTPException(status_code=404, detail="Message not found")
+        if msg.data["sender_id"] != user["id"]:
+            raise HTTPException(status_code=403, detail="You can only delete your own messages")
+
+        supabase.table("messages").update({
+            "content": "",
+            "deleted_at": datetime.utcnow().isoformat(),
+        }).eq("id", message_id).execute()
+        supabase.table("message_reactions").delete().eq("message_id", message_id).execute()
+
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"delete_message: {type(e).__name__}: {e}")
