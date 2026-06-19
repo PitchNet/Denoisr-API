@@ -1206,6 +1206,7 @@ def insert_people(people: List[Dict[str, Any]]):
 def send_message(payload: Dict[str, str], user: dict = Depends(get_current_user)):
     recipient_id = payload.get("recipientId")
     content = payload.get("content")
+    reply_to_id = payload.get("replyToId")
 
     if not recipient_id or not content:
         raise HTTPException(status_code=400, detail="Missing recipientId or content")
@@ -1269,11 +1270,19 @@ def send_message(payload: Dict[str, str], user: dict = Depends(get_current_user)
                 {"conversation_id": conversation_id, "user_id": recipient_id},
             ]).execute()
 
+        # A reply must point at a message in this same conversation
+        if reply_to_id:
+            reply_target = supabase.table("messages").select("conversation_id") \
+                .eq("id", reply_to_id).maybe_single().execute()
+            if not reply_target or not reply_target.data or reply_target.data["conversation_id"] != conversation_id:
+                raise HTTPException(status_code=400, detail="Invalid reply target")
+
         # Insert the message
         msg = supabase.table("messages").insert({
             "conversation_id": conversation_id,
             "sender_id": user["id"],
             "content": content,
+            "reply_to_id": reply_to_id,
         }).execute()
 
         if not msg.data:
@@ -1337,8 +1346,16 @@ def get_messages(payload: Dict[str, str], user: dict = Depends(get_current_user)
         if not conversation_id:
             return {"messages": [], "otherReadAt": None}
 
+        # Self-referencing FK: `alias:column(...)` resolves to the to-one row this
+        # column points at. `alias:table!column(...)` looks correct but actually
+        # resolves to the *reverse* one-to-many (other rows pointing at this one) —
+        # confirmed empirically against this Supabase project's Postgrest instance.
         messages_res = supabase.table("messages") \
-            .select("id, sender_id, content, created_at, edited_at, deleted_at, message_reactions(id, user_id, emoji)") \
+            .select(
+                "id, sender_id, content, created_at, edited_at, deleted_at, reply_to_id, "
+                "reply_to:reply_to_id(id, sender_id, content, deleted_at), "
+                "message_reactions(id, user_id, emoji)"
+            ) \
             .eq("conversation_id", conversation_id) \
             .order("created_at") \
             .execute()
