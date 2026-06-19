@@ -5,7 +5,7 @@ import requests
 import time
 from dotenv import load_dotenv
 from supabase import create_client, Client
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from app.services.service import UploadImageKey
 from app.auth_utils import get_current_user_row
 
@@ -60,6 +60,8 @@ def get_profile(user: dict = Depends(get_current_user)):
             "salary": p.get("salary"),
             "intro": p.get("intro"),
             "photo": p.get("photo"),
+            "resume": p.get("resume_url"),
+            "resumeFilename": p.get("resume_filename"),
             "companyId": p.get("companyid"),
             "highlights": highlights,
             "tags": tags,
@@ -87,10 +89,30 @@ def get_profile(user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=f"get_profile: {type(e).__name__}: {e}")
 
 
+RESUME_STORAGE_BUCKET = "files"
+RESUME_ALLOWED_EXTENSIONS = {".pdf", ".docx"}
+RESUME_PUBLIC_URL_MARKER = f"/storage/v1/object/public/{RESUME_STORAGE_BUCKET}/"
+
+
+def _resume_storage_path_from_url(url: Optional[str]) -> Optional[str]:
+    if not url or RESUME_PUBLIC_URL_MARKER not in url:
+        return None
+    return url.split(RESUME_PUBLIC_URL_MARKER, 1)[1]
+
+
 @router.post("/updateProfile")
 def update_profile(payload: Dict[str, Any], user: dict = Depends(get_current_user)):
     try:
         person_id = user["id"]
+
+        # If the resume file is being replaced/removed, we need the previous
+        # URL so the old object can be deleted from storage below.
+        existing_person = supabase.table("people").select("resume_url") \
+            .eq("id", person_id).maybe_single().execute()
+        old_resume_url = existing_person.data.get("resume_url") if existing_person and existing_person.data else None
+        # Default to the existing value when the field is omitted entirely, so
+        # an unrelated save doesn't get misread as "the resume was cleared".
+        new_resume_url = payload.get("resume", old_resume_url)
 
         # Update scalar fields on the people row
         scalar_fields = {
@@ -102,11 +124,22 @@ def update_profile(payload: Dict[str, Any], user: dict = Depends(get_current_use
             "salary": payload.get("salary"),
             "intro": payload.get("intro"),
             "photo": payload.get("photo"),
+            "resume_url": new_resume_url,
+            "resume_filename": payload.get("resumeFilename"),
         }
         scalar_fields = {k: v for k, v in scalar_fields.items() if v is not None}
 
         if scalar_fields:
             supabase.table("people").update(scalar_fields).eq("id", person_id).execute()
+
+        # Clean up the old resume file once the profile has been saved successfully
+        if old_resume_url and old_resume_url != new_resume_url:
+            old_path = _resume_storage_path_from_url(old_resume_url)
+            if old_path:
+                try:
+                    supabase.storage.from_(RESUME_STORAGE_BUCKET).remove([old_path])
+                except Exception:
+                    pass  # best-effort cleanup — a stray orphaned file isn't worth failing the save
 
         # Replace highlights
         supabase.table("people_highlights").delete().eq("person_id", person_id).execute()
@@ -215,3 +248,59 @@ async def upload_image(file: UploadFile = File(...), user: dict = Depends(get_cu
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"upload_image: {type(e).__name__}: {e}")
+
+
+@router.post("/uploadResume")
+async def upload_resume(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    person_id = user["id"]
+
+    _, ext = os.path.splitext(file.filename or "")
+    ext = ext.lower()
+    if ext not in RESUME_ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Only PDF or DOCX files are allowed")
+
+    contents = await file.read()
+    if len(contents) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File must be under 10MB")
+
+    content_type = file.content_type or (
+        "application/pdf" if ext == ".pdf"
+        else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    storage_path = f"resumes/{person_id}/{uuid.uuid4().hex}{ext}"
+
+    try:
+        supabase.storage.from_(RESUME_STORAGE_BUCKET).upload(
+            storage_path, contents, {"content-type": content_type}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"upload_resume: storage upload failed: {e}")
+
+    public_url = supabase.storage.from_(RESUME_STORAGE_BUCKET).get_public_url(storage_path)
+    return {"url": public_url, "filename": file.filename}
+
+
+@router.post("/deleteResume")
+def delete_resume(payload: Dict[str, Any], user: dict = Depends(get_current_user)):
+    # For cleaning up a freshly-uploaded resume that was discarded before the
+    # profile was ever saved (e.g. uploaded, then replaced or removed before
+    # hitting Save). updateProfile handles deleting the *previous* file on a
+    # real save — this is only for files that never made it into a save at all.
+    person_id = user["id"]
+
+    url = payload.get("url")
+    path = _resume_storage_path_from_url(url)
+    if not path:
+        return {"success": True}
+
+    # Scope deletion to this person's own folder so one user can't be tricked
+    # into deleting another's file via this endpoint.
+    if not path.startswith(f"resumes/{person_id}/"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+
+    try:
+        supabase.storage.from_(RESUME_STORAGE_BUCKET).remove([path])
+    except Exception:
+        pass  # best-effort cleanup
+
+    return {"success": True}

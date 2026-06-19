@@ -1,8 +1,9 @@
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, UploadFile, File
 import os
+import uuid
 from dotenv import load_dotenv
 from supabase import create_client, Client
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 from app.controllers.NotificationController import send_push
 from app.auth_utils import get_current_user_row
@@ -91,6 +92,77 @@ def get_company(user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=f"get_company: {type(e).__name__}: {e}")
 
 
+JD_STORAGE_BUCKET = "files"
+JD_ALLOWED_EXTENSIONS = {".pdf", ".docx"}
+JD_PUBLIC_URL_MARKER = f"/storage/v1/object/public/{JD_STORAGE_BUCKET}/"
+
+
+def _jd_storage_path_from_url(url: Optional[str]) -> Optional[str]:
+    if not url or JD_PUBLIC_URL_MARKER not in url:
+        return None
+    return url.split(JD_PUBLIC_URL_MARKER, 1)[1]
+
+
+@router.post("/uploadJobDescription")
+async def upload_job_description(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    company_id = user.get("companyid")
+    if not company_id:
+        raise HTTPException(status_code=400, detail="No company associated with this user")
+
+    _, ext = os.path.splitext(file.filename or "")
+    ext = ext.lower()
+    if ext not in JD_ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Only PDF or DOCX files are allowed")
+
+    contents = await file.read()
+    if len(contents) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File must be under 10MB")
+
+    content_type = file.content_type or (
+        "application/pdf" if ext == ".pdf"
+        else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    storage_path = f"job-descriptions/{company_id}/{uuid.uuid4().hex}{ext}"
+
+    try:
+        supabase.storage.from_(JD_STORAGE_BUCKET).upload(
+            storage_path, contents, {"content-type": content_type}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"upload_job_description: storage upload failed: {e}")
+
+    public_url = supabase.storage.from_(JD_STORAGE_BUCKET).get_public_url(storage_path)
+    return {"url": public_url, "filename": file.filename}
+
+
+@router.post("/deleteJobDescription")
+def delete_job_description(payload: Dict[str, Any], user: dict = Depends(get_current_user)):
+    # For cleaning up a freshly-uploaded JD file that was discarded before the
+    # job was ever saved (e.g. the user uploads, then hits Cancel or Remove).
+    # jobDetails handles deleting the *previous* file on a real save — this is
+    # only for files that never made it into a job row at all.
+    company_id = user.get("companyid")
+    if not company_id:
+        raise HTTPException(status_code=400, detail="No company associated with this user")
+
+    url = payload.get("url")
+    path = _jd_storage_path_from_url(url)
+    if not path:
+        return {"success": True}
+
+    # Scope deletion to this company's own folder so one company can't be
+    # tricked into deleting another's file via this endpoint.
+    if not path.startswith(f"job-descriptions/{company_id}/"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+
+    try:
+        supabase.storage.from_(JD_STORAGE_BUCKET).remove([path])
+    except Exception:
+        pass  # best-effort cleanup
+
+    return {"success": True}
+
+
 @router.post("/jobDetails")
 def job_details(payload: Dict[str, Any], user: dict = Depends(get_current_user)):
     try:
@@ -104,6 +176,20 @@ def job_details(payload: Dict[str, Any], user: dict = Depends(get_current_user))
 
         job_id = payload.get("id")
 
+        # If this is an update and the JD file is being replaced/removed, we need
+        # the previous URL so the old object can be deleted from storage below.
+        old_jd_url = None
+        if job_id:
+            existing_job = supabase.table("jobs").select("job_description_url") \
+                .eq("id", job_id).maybe_single().execute()
+            if existing_job and existing_job.data:
+                old_jd_url = existing_job.data.get("job_description_url")
+
+        # Default to the existing value when the field is omitted entirely, so an
+        # unrelated save (e.g. editing just the headline) doesn't get misread as
+        # "the JD file was cleared" and trigger a deletion below.
+        new_jd_url = payload.get("jobDescriptionUrl", old_jd_url)
+
         job_payload = {
             "headline": payload.get("headline"),
             "subheadline": company_name,
@@ -113,6 +199,8 @@ def job_details(payload: Dict[str, Any], user: dict = Depends(get_current_user))
             "salary": payload.get("salary"),
             "intro": payload.get("intro"),
             "company_id": company_id,
+            "job_description_url": new_jd_url,
+            "job_description_filename": payload.get("jobDescriptionFilename"),
         }
         job_payload = {k: v for k, v in job_payload.items() if v is not None}
 
@@ -124,6 +212,15 @@ def job_details(payload: Dict[str, Any], user: dict = Depends(get_current_user))
                 err = (insert.error or {}).get("message", "unknown")
                 raise HTTPException(status_code=500, detail=f"job_details: create failed — {err}")
             job_id = insert.data[0]["id"]
+
+        # Clean up the old JD file once the new job row has been saved successfully
+        if old_jd_url and old_jd_url != new_jd_url:
+            old_path = _jd_storage_path_from_url(old_jd_url)
+            if old_path:
+                try:
+                    supabase.storage.from_(JD_STORAGE_BUCKET).remove([old_path])
+                except Exception:
+                    pass  # best-effort cleanup — a stray orphaned file isn't worth failing the save
 
         # Replace highlights
         supabase.table("job_highlights").delete().eq("job_id", job_id).execute()
@@ -194,6 +291,8 @@ def company_jobs(user: dict = Depends(get_current_user)):
                 "experience": job.get("experience"),
                 "salary": job.get("salary"),
                 "intro": job.get("intro"),
+                "jobDescriptionUrl": job.get("job_description_url"),
+                "jobDescriptionFilename": job.get("job_description_filename"),
                 "highlights": [
                     h["highlight"] for h in job.get("job_highlights", [])
                 ],

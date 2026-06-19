@@ -3,9 +3,11 @@ import os
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from supabase import create_client, Client
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from app.auth_utils import get_current_user_row, is_admin
 from app.controllers.NotificationController import send_push
+from app.controllers.CompanyController import JD_STORAGE_BUCKET, _jd_storage_path_from_url
+from app.controllers.ProfileController import RESUME_STORAGE_BUCKET, _resume_storage_path_from_url
 
 load_dotenv()
 
@@ -125,3 +127,75 @@ def resolve_report(payload: Dict[str, Any], user: dict = Depends(require_admin))
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"resolve_report: {type(e).__name__}: {e}")
+
+
+def _list_storage_paths(bucket: str, prefix: str) -> List[str]:
+    """Recursively list every file path under `prefix` in `bucket`.
+
+    Supabase Storage's `list()` only returns one level at a time and mixes
+    files with subfolders in the same response — a folder entry shows up with
+    no `id`, a real file always has one. job-descriptions/ and resumes/ are
+    one level deeper than that (per company/person), so this has to recurse.
+    """
+    paths: List[str] = []
+    entries = supabase.storage.from_(bucket).list(prefix)
+    for entry in entries or []:
+        name = entry.get("name")
+        if not name:
+            continue
+        full_path = f"{prefix}/{name}" if prefix else name
+        if entry.get("id") is None:
+            paths.extend(_list_storage_paths(bucket, full_path))
+        else:
+            paths.append(full_path)
+    return paths
+
+
+@router.post("/cleanupOrphanedFiles")
+def cleanup_orphaned_files(payload: Optional[Dict[str, Any]] = None):
+    """Delete JD/resume files in Storage that no job or profile references
+    anymore — e.g. uploads abandoned mid-edit without ever being saved.
+    Pass {"dryRun": true} to preview what would be deleted without deleting it.
+
+    Deliberately unauthenticated (no admin/login check) so it can be called
+    from a cron job or script with no user session — see the security note in
+    conversation: this means anyone who knows the URL can trigger it, but the
+    blast radius is limited to files already unreferenced by any DB row.
+    """
+    try:
+        dry_run = bool((payload or {}).get("dryRun"))
+
+        jd_paths = _list_storage_paths(JD_STORAGE_BUCKET, "job-descriptions")
+        resume_paths = _list_storage_paths(RESUME_STORAGE_BUCKET, "resumes")
+
+        jobs_res = supabase.table("jobs").select("job_description_url") \
+            .not_.is_("job_description_url", "null").execute()
+        referenced_jd = {
+            path for j in (jobs_res.data or [])
+            if (path := _jd_storage_path_from_url(j.get("job_description_url")))
+        }
+
+        people_res = supabase.table("people").select("resume_url") \
+            .not_.is_("resume_url", "null").execute()
+        referenced_resumes = {
+            path for p in (people_res.data or [])
+            if (path := _resume_storage_path_from_url(p.get("resume_url")))
+        }
+
+        orphaned_jd = [p for p in jd_paths if p not in referenced_jd]
+        orphaned_resumes = [p for p in resume_paths if p not in referenced_resumes]
+
+        if not dry_run:
+            if orphaned_jd:
+                supabase.storage.from_(JD_STORAGE_BUCKET).remove(orphaned_jd)
+            if orphaned_resumes:
+                supabase.storage.from_(RESUME_STORAGE_BUCKET).remove(orphaned_resumes)
+
+        return {
+            "dryRun": dry_run,
+            "scanned": {"jobDescriptions": len(jd_paths), "resumes": len(resume_paths)},
+            "deleted": {"jobDescriptions": orphaned_jd, "resumes": orphaned_resumes},
+            "deletedCount": len(orphaned_jd) + len(orphaned_resumes),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"cleanup_orphaned_files: {type(e).__name__}: {e}")
