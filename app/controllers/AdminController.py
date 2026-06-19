@@ -76,3 +76,52 @@ def review_company(payload: Dict[str, Any], user: dict = Depends(require_admin))
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"review_company: {type(e).__name__}: {e}")
+
+
+@router.get("/userReports")
+def user_reports(status: str = "open", user: dict = Depends(require_admin)):
+    try:
+        reports = supabase.table("user_reports").select("*").eq("status", status).order("created_at", desc=True).execute().data or []
+
+        people_ids = {r["reporter_id"] for r in reports} | {r["reported_id"] for r in reports}
+        people_by_id: Dict[str, Any] = {}
+        if people_ids:
+            people = supabase.table("people").select("id, headline, emailaddress").in_("id", list(people_ids)).execute().data or []
+            people_by_id = {p["id"]: p for p in people}
+
+        for r in reports:
+            r["reporter"] = people_by_id.get(r["reporter_id"])
+            r["reported"] = people_by_id.get(r["reported_id"])
+
+        return {"reports": reports}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"user_reports: {type(e).__name__}: {e}")
+
+
+@router.post("/resolveReport")
+def resolve_report(payload: Dict[str, Any], user: dict = Depends(require_admin)):
+    try:
+        report_id = payload.get("reportId")
+        decision = payload.get("decision")
+        notes = payload.get("notes")
+
+        if not report_id:
+            raise HTTPException(status_code=400, detail="reportId is required")
+        if decision not in ("resolved", "dismissed"):
+            raise HTTPException(status_code=400, detail="decision must be 'resolved' or 'dismissed'")
+
+        update = {
+            "status": decision,
+            "resolution_notes": notes,
+            "resolved_at": datetime.now(timezone.utc).isoformat(),
+            "resolved_by": user["id"],
+        }
+        result = supabase.table("user_reports").update(update).eq("id", report_id).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Report not found")
+
+        return {"message": "Report reviewed", "reportId": report_id, "status": decision}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"resolve_report: {type(e).__name__}: {e}")

@@ -127,8 +127,12 @@ All routers are registered in `app/main.py`. Each file in `app/controllers/` is 
 | GET | `/isAdmin` | Yes | Returns `{ isAdmin }` for the current user — lets the UI decide whether to show admin nav, not itself a security boundary |
 | GET | `/pendingCompanies` | Admin | List companies by `verification_status` (query param `status`, default `unverified`) |
 | POST | `/reviewCompany` | Admin | `{ companyId, decision: "verified" \| "rejected", notes? }` — updates the company's verification fields and pushes a notification to its owner |
+| GET | `/userReports` | Admin | List `user_reports` by `status` (query param, default `open`), each row enriched with `reporter`/`reported` (`{ id, headline, emailaddress }`, batch-fetched from `people`) |
+| POST | `/resolveReport` | Admin | `{ reportId, decision: "resolved" \| "dismissed", notes? }` — updates the report's review fields. No notification is sent (reports are reviewed silently; only company verification pushes to the affected user) |
 
-**Admin model:** there's no roles table — `auth_utils.is_admin(user)` just checks `user["id"]` against the comma-separated `ADMIN_USER_IDS` env var. `require_admin` (local to `AdminController.py`) is the dependency that 403s non-admins on the two gated routes above.
+**Admin model:** there's no roles table — `auth_utils.is_admin(user)` just checks `user["id"]` against the comma-separated `ADMIN_USER_IDS` env var. `require_admin` (local to `AdminController.py`) is the dependency that 403s non-admins on the four gated routes above.
+
+**Report review:** `user_reports` (submitted via `POST /FeedController/reportUser`, free-text `reason`/`details`, no auto-block) was append-only until this added `status` (`open`/`resolved`/`dismissed`, default `open`), `resolution_notes`, `resolved_at`, `resolved_by`. Resolving a report is purely a record-keeping action — it does not block the reported user; an admin who wants to act on a report does so manually via the existing `/FeedController/blockUser`.
 
 #### `NotificationController` — `/NotificationController`
 
@@ -186,6 +190,8 @@ Tables inferred from queries — source of truth is `../Denoisr-DB/DDL/`.
 | `companies` | `id`, `name`, `photo`, `website`, `size`, `address`, `description`, `phone`, `year_founded`, `tags`, `commitments`, `verification_status` (`unverified`/`verified`/`rejected`, default `unverified`), `verification_notes`, `verified_at`, `verified_by` |
 | `user_job_actions` | `user_id`, `job_id`, `action` (`"accepted"` / `"bookmark"`), `status` |
 | `user_people_actions` | `user_id`, `people_id`, `action` (`"sent"` / `"connected"` / `"bookmark"`) |
+| `blocked_users` | `id`, `blocker_id`, `blocked_id`, `created_at` |
+| `user_reports` | `id`, `reporter_id`, `reported_id`, `reason`, `details`, `created_at`, `status` (`open`/`resolved`/`dismissed`, default `open`), `resolution_notes`, `resolved_at`, `resolved_by` |
 | `conversations` | `id`, `updated_at` |
 | `conversation_participants` | `conversation_id`, `user_id` |
 | `messages` | `id`, `conversation_id`, `sender_id`, `content`, `created_at` |
