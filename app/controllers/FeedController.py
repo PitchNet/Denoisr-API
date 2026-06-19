@@ -157,13 +157,15 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
         cursor = filters.get("cursor")
         batch_size = filters.get("batch_size") or FETCH_BATCH_SIZE
 
+        bookmark_res = supabase.table("user_people_actions") \
+            .select("people_id") \
+            .eq("user_id", user["id"]) \
+            .eq("action", "bookmark") \
+            .execute()
+        bookmark_ids = [b["people_id"] for b in (bookmark_res.data or [])]
+        bookmark_id_set = set(bookmark_ids)
+
         if bookmarked:
-            bookmark_res = supabase.table("user_people_actions") \
-                .select("people_id") \
-                .eq("user_id", user["id"]) \
-                .eq("action", "bookmark") \
-                .execute()
-            bookmark_ids = [b["people_id"] for b in (bookmark_res.data or [])]
             if not bookmark_ids:
                 return {"items": [], "next_cursor": None, "has_more": False, "total_count": 0}
             query = query.in_("id", bookmark_ids)
@@ -338,6 +340,7 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
                 "highlights": highlights,
                 "tags": tags,
                 "sections": sections,
+                "bookmarked": pid in bookmark_id_set,
             })
 
         return {
@@ -549,13 +552,13 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
                 .execute()
             accepted_job_ids = [a["job_id"] for a in (accepted_res.data or [])]
 
-            if bookmarked:
-                bookmark_res = supabase.table("user_job_actions") \
-                    .select("job_id") \
-                    .eq("user_id", user["id"]) \
-                    .eq("action", "bookmark") \
-                    .execute()
-                bookmark_ids = [b["job_id"] for b in (bookmark_res.data or [])]
+            bookmark_res = supabase.table("user_job_actions") \
+                .select("job_id") \
+                .eq("user_id", user["id"]) \
+                .eq("action", "bookmark") \
+                .execute()
+            bookmark_ids = [b["job_id"] for b in (bookmark_res.data or [])]
+        bookmark_id_set = set(bookmark_ids)
         # --------------------------
         # 2. Filtering logic
         # --------------------------
@@ -738,7 +741,8 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
                         ]
                     }
                     for s in job.get("job_sections", [])
-                ]
+                ],
+                "bookmarked": job["id"] in bookmark_id_set,
             })
 
         return {
@@ -758,6 +762,7 @@ def job_applications(user: dict = Depends(get_current_user)):
         actions_res = supabase.table("user_job_actions") \
             .select("job_id, status") \
             .eq("user_id", user["id"]) \
+            .eq("action", "accepted") \
             .execute()
 
         job_ids = [a["job_id"] for a in (actions_res.data or [])]
@@ -848,7 +853,7 @@ def withdraw_job_application(payload: Dict[str, str], user: dict = Depends(get_c
 
 
 @router.post("/jobAction")
-def accept_job(payload: Dict[str, str], user: str = Depends(get_current_user)):
+def accept_job(payload: Dict[str, str], user: dict = Depends(get_current_user)):
 
     job_id = payload.get("jobId")
     action = payload.get("action", "accepted")
@@ -857,6 +862,34 @@ def accept_job(payload: Dict[str, str], user: str = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="Missing fields")
 
     try:
+        if action == "bookmark":
+            existing = supabase.table("user_job_actions") \
+                .select("action") \
+                .eq("user_id", user["id"]) \
+                .eq("job_id", job_id) \
+                .execute()
+            current_action = existing.data[0]["action"] if existing.data else None
+
+            if current_action == "accepted":
+                raise HTTPException(status_code=400, detail="Cannot bookmark a job you've already applied to")
+
+            if current_action == "bookmark":
+                # Toggle off: a second bookmark click removes it instead of being a no-op upsert
+                supabase.table("user_job_actions") \
+                    .delete() \
+                    .eq("user_id", user["id"]) \
+                    .eq("job_id", job_id) \
+                    .eq("action", "bookmark") \
+                    .execute()
+                return {"message": "Bookmark removed", "bookmarked": False}
+
+            supabase.table("user_job_actions").upsert({
+                "user_id": user["id"],
+                "job_id": job_id,
+                "action": "bookmark",
+            }).execute()
+            return {"message": "Bookmarked", "bookmarked": True}
+
         supabase.table("user_job_actions").upsert({
             "user_id": user["id"],
             "job_id": job_id,
@@ -865,6 +898,8 @@ def accept_job(payload: Dict[str, str], user: str = Depends(get_current_user)):
 
         return {"message": "Job action recorded"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"job_action: {type(e).__name__}: {e}")
 
@@ -899,7 +934,35 @@ def connect_people(payload: Dict[str, str], user: dict = Depends(get_current_use
         raise HTTPException(status_code=400, detail="Missing fields")
 
     try:
-        # Non-standard actions (e.g. bookmark) just upsert and return
+        if action == "bookmark":
+            existing = supabase.table("user_people_actions") \
+                .select("action") \
+                .eq("user_id", user["id"]) \
+                .eq("people_id", people_id) \
+                .execute()
+            current_action = existing.data[0]["action"] if existing.data else None
+
+            if current_action in ("sent", "connected"):
+                raise HTTPException(status_code=400, detail="Cannot bookmark a pending or connected request")
+
+            if current_action == "bookmark":
+                # Toggle off: a second bookmark click removes it instead of being a no-op upsert
+                supabase.table("user_people_actions") \
+                    .delete() \
+                    .eq("user_id", user["id"]) \
+                    .eq("people_id", people_id) \
+                    .eq("action", "bookmark") \
+                    .execute()
+                return {"message": "Bookmark removed", "bookmarked": False}
+
+            supabase.table("user_people_actions").upsert({
+                "user_id": user["id"],
+                "people_id": people_id,
+                "action": "bookmark",
+            }).execute()
+            return {"message": "Bookmarked", "bookmarked": True}
+
+        # Non-standard actions other than bookmark just upsert and return
         if action != "accepted":
             supabase.table("user_people_actions").upsert({
                 "user_id": user["id"],
@@ -973,6 +1036,8 @@ def connect_people(payload: Dict[str, str], user: dict = Depends(get_current_use
 
             return {"message": "Connection request sent", "matched": False}
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"people_action: {type(e).__name__}: {e}")
 
