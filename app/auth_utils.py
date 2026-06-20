@@ -78,6 +78,16 @@ def get_current_user_row(request: Request, supabase: Client) -> dict:
     return user.data
 
 
+def get_optional_user_row(request: Request, supabase: Client) -> dict | None:
+    """Like get_current_user_row, but returns None instead of raising when
+    there's no valid session — for endpoints that are public but personalize
+    their response when a session does exist."""
+    try:
+        return get_current_user_row(request, supabase)
+    except HTTPException:
+        return None
+
+
 def is_admin(user: dict) -> bool:
     """Crude allowlist gate: no roles table, just a comma-separated list of
     people.id values in ADMIN_USER_IDS. Good enough until there's an actual

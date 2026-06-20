@@ -6,7 +6,7 @@ from supabase import create_client, Client
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 from app.controllers.NotificationController import send_push
-from app.auth_utils import get_current_user_row
+from app.auth_utils import get_current_user_row, get_optional_user_row
 
 load_dotenv()
 
@@ -20,6 +20,10 @@ router = APIRouter(prefix="/CompanyController", tags=["Company"])
 
 def get_current_user(request: Request):
     return get_current_user_row(request, supabase)
+
+
+def get_optional_user(request: Request):
+    return get_optional_user_row(request, supabase)
 
 
 @router.post("/companyDetails")
@@ -131,6 +135,38 @@ def get_company_by_id(company_id: str, user: dict = Depends(get_current_user)):
         if "PGRST116" in str(e) or "Results contain 0 rows" in str(e):
             raise HTTPException(status_code=404, detail="Company not found")
         raise HTTPException(status_code=500, detail=f"get_company_by_id: {type(e).__name__}: {e}")
+
+
+@router.get("/getCompanyJobsById/{company_id}")
+def get_company_jobs_by_id(company_id: str, user: dict | None = Depends(get_optional_user)):
+    """Read-only, owner-agnostic open-positions list for a company's public profile.
+
+    Lighter than companyJobs: no job_sections/highlights, just enough for a
+    candidate to scan what's open before going to the swipe feed to apply.
+    """
+    try:
+        jobs_res = supabase.table("jobs").select(
+            "id, headline, location, experience, salary, intro, created_at, job_tags(tag)"
+        ).eq("company_id", company_id).order("created_at", desc=True).execute()
+
+        jobs = jobs_res.data or []
+
+        return [
+            {
+                "id": job["id"],
+                "headline": job.get("headline"),
+                "location": job.get("location"),
+                "experience": job.get("experience"),
+                "salary": job.get("salary"),
+                "intro": job.get("intro"),
+                "tags": [t["tag"] for t in job.get("job_tags", [])],
+                "postedAgo": _relative_time(job.get("created_at")),
+            }
+            for job in jobs
+        ]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"get_company_jobs_by_id: {type(e).__name__}: {e}")
 
 
 JD_STORAGE_BUCKET = "files"

@@ -8,7 +8,8 @@ from supabase import create_client, Client
 from typing import List, Dict, Any
 from collections import defaultdict
 from app.controllers.NotificationController import send_push
-from app.auth_utils import get_current_user_row
+from app.auth_utils import get_current_user_row, get_optional_user_row
+from app.controllers.CompanyController import _relative_time
 # --------------------------
 # Load ENV
 # --------------------------
@@ -35,6 +36,10 @@ FETCH_BATCH_SIZE = int(os.getenv("FETCH_BATCH_SIZE", "10"))
 # --------------------------
 def get_current_user(request: Request):
     return get_current_user_row(request, supabase)
+
+
+def get_optional_user(request: Request):
+    return get_optional_user_row(request, supabase)
 
 
 # --------------------------
@@ -539,6 +544,7 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
         salary = filters.get("salary")
         bookmarked = filters.get("bookmarked")
         search = filters.get("search")
+        company_id = filters.get("companyId")
         cursor = filters.get("cursor")
         batch_size = filters.get("batch_size") or FETCH_BATCH_SIZE
 
@@ -639,6 +645,10 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
         if salary is not None:
             query = query.lte("salary", salary)
 
+        # Company → exact scope (e.g. "browse other roles at this company")
+        if company_id:
+            query = query.eq("company_id", company_id)
+
         # Exclude accepted jobs
         if accepted_job_ids:
             query = query.not_.in_("id", accepted_job_ids)
@@ -666,6 +676,8 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
                 count_query = count_query.or_(",".join([f"location.ilike.%{c}%" for c in cities_ct]))
         if salary is not None:
             count_query = count_query.lte("salary", salary)
+        if company_id:
+            count_query = count_query.eq("company_id", company_id)
         if accepted_job_ids:
             count_query = count_query.not_.in_("id", accepted_job_ids)
         if bookmarked:
@@ -756,6 +768,82 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"fetch_jobs: {type(e).__name__}: {e}")
+
+
+@router.get("/getJobById/{job_id}")
+def get_job_by_id(job_id: str, user: dict | None = Depends(get_optional_user)):
+    """Public, shareable single-job view — no auth required. bookmarked/applied
+    are only populated when a valid session exists; guests always get false."""
+    try:
+        job_res = supabase.table("jobs").select("""
+            *,
+            job_highlights(highlight),
+            job_tags(tag),
+            job_sections(
+                id,
+                title,
+                job_section_items(item)
+            ),
+            companies!company_id(id, name, photo, verification_status)
+        """).eq("id", job_id).single().execute()
+
+        if not job_res.data:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        job = job_res.data
+        company = job.get("companies") or {}
+        if not isinstance(company, dict):
+            company = {}
+
+        bookmarked = False
+        applied = False
+        if user:
+            action_res = supabase.table("user_job_actions") \
+                .select("action") \
+                .eq("user_id", user["id"]) \
+                .eq("job_id", job_id) \
+                .execute()
+            actions = {a["action"] for a in (action_res.data or [])}
+            bookmarked = "bookmark" in actions
+            applied = "accepted" in actions
+
+        return {
+            "job": {
+                "id": job["id"],
+                "headline": job.get("headline"),
+                "subheadline": job.get("subheadline"),
+                "organization": job.get("organization"),
+                "location": job.get("location"),
+                "experience": job.get("experience"),
+                "salary": job.get("salary"),
+                "intro": job.get("intro"),
+                "highlights": [h["highlight"] for h in job.get("job_highlights", [])],
+                "tags": [t["tag"] for t in job.get("job_tags", [])],
+                "sections": [
+                    {
+                        "title": s["title"],
+                        "items": [i["item"] for i in s.get("job_section_items", [])],
+                    }
+                    for s in job.get("job_sections", [])
+                ],
+                "jobDescriptionUrl": job.get("job_description_url"),
+                "jobDescriptionFilename": job.get("job_description_filename"),
+                "postedAgo": _relative_time(job.get("created_at")),
+                "companyId": company.get("id"),
+                "companyName": company.get("name"),
+                "companyPhoto": company.get("photo"),
+                "companyVerified": company.get("verification_status") == "verified",
+                "bookmarked": bookmarked,
+                "applied": applied,
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        if "PGRST116" in str(e) or "Results contain 0 rows" in str(e):
+            raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(status_code=500, detail=f"get_job_by_id: {type(e).__name__}: {e}")
 
 
 @router.get("/jobApplications")
