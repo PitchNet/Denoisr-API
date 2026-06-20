@@ -6,7 +6,7 @@ from db import supabase
 
 app = FastAPI()
 
-origins = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,https://denoisr-ui.vercel.app").split(",")
+origins = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:3000,https://denoisr-ui.vercel.app").split(",")
 
 app.add_middleware(
     CORSMiddleware,

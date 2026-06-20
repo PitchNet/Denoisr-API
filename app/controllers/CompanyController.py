@@ -92,6 +92,47 @@ def get_company(user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=f"get_company: {type(e).__name__}: {e}")
 
 
+@router.get("/getCompanyById/{company_id}")
+def get_company_by_id(company_id: str, user: dict = Depends(get_current_user)):
+    """Read-only, owner-agnostic company profile for any authenticated user.
+
+    Returns public-safe fields only — deliberately omits the internal
+    verification_notes / verified_by / verified_at admin metadata.
+    """
+    try:
+        company = supabase.table("companies").select("*").eq("id", company_id).single().execute()
+
+        if not company.data:
+            raise HTTPException(status_code=404, detail="Company not found")
+
+        c = company.data
+
+        return {
+            "company": {
+                "id": c.get("id"),
+                "name": c.get("name"),
+                "photo": c.get("photo"),
+                "website": c.get("website"),
+                "size": c.get("size"),
+                "address": c.get("address"),
+                "description": c.get("description"),
+                "phone": c.get("phone"),
+                "yearFounded": c.get("year_founded"),
+                "tags": c.get("tags") or [],
+                "commitments": c.get("commitments"),
+                "verificationStatus": c.get("verification_status"),
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # .single() raises when the row is absent — surface that as a clean 404.
+        if "PGRST116" in str(e) or "Results contain 0 rows" in str(e):
+            raise HTTPException(status_code=404, detail="Company not found")
+        raise HTTPException(status_code=500, detail=f"get_company_by_id: {type(e).__name__}: {e}")
+
+
 JD_STORAGE_BUCKET = "files"
 JD_ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 JD_PUBLIC_URL_MARKER = f"/storage/v1/object/public/{JD_STORAGE_BUCKET}/"
