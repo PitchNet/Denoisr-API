@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 from app.controllers.NotificationController import send_push
 from app.auth_utils import get_current_user_row, get_optional_user_row
+from app.controllers._helpers import assemble_children
 
 load_dotenv()
 
@@ -16,6 +17,9 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 router = APIRouter(prefix="/CompanyController", tags=["Company"])
+
+# Upload config (env-overridable; default preserves prior behavior)
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
 
 
 def get_current_user(request: Request):
@@ -192,7 +196,7 @@ async def upload_job_description(file: UploadFile = File(...), user: dict = Depe
         raise HTTPException(status_code=400, detail="Only PDF or DOCX files are allowed")
 
     contents = await file.read()
-    if len(contents) > 10 * 1024 * 1024:
+    if len(contents) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=400, detail="File must be under 10MB")
 
     content_type = file.content_type or (
@@ -317,22 +321,23 @@ def job_details(payload: Dict[str, Any], user: dict = Depends(get_current_user))
 
         # Replace sections + items
         existing = supabase.table("job_sections").select("id").eq("job_id", job_id).execute()
-        for sec in (existing.data or []):
-            supabase.table("job_section_items").delete().eq("section_id", sec["id"]).execute()
+        existing_section_ids = [sec["id"] for sec in (existing.data or [])]
+        if existing_section_ids:
+            supabase.table("job_section_items").delete().in_("section_id", existing_section_ids).execute()
         supabase.table("job_sections").delete().eq("job_id", job_id).execute()
 
         sections = payload.get("sections") or []
-        for section in sections:
-            sec_insert = supabase.table("job_sections").insert({
-                "job_id": job_id, "title": section.get("title")
-            }).execute()
-            if sec_insert.data:
-                sec_id = sec_insert.data[0]["id"]
-                items = section.get("items") or []
-                if items:
-                    supabase.table("job_section_items").insert([
-                        {"section_id": sec_id, "item": item} for item in items
-                    ]).execute()
+        if sections:
+            inserted_sections = supabase.table("job_sections").insert([
+                {"job_id": job_id, "title": section.get("title")} for section in sections
+            ]).execute()
+            section_items = [
+                {"section_id": row["id"], "item": item}
+                for section, row in zip(sections, inserted_sections.data or [])
+                for item in (section.get("items") or [])
+            ]
+            if section_items:
+                supabase.table("job_section_items").insert(section_items).execute()
 
         return {"message": "Job saved", "jobId": job_id}
 
@@ -358,6 +363,7 @@ def company_jobs(user: dict = Depends(get_current_user)):
 
         result = []
         for job in jobs:
+            highlights, tags, sections = assemble_children(job, "job")
             result.append({
                 "id": job["id"],
                 "kind": "jobs",
@@ -370,21 +376,9 @@ def company_jobs(user: dict = Depends(get_current_user)):
                 "intro": job.get("intro"),
                 "jobDescriptionUrl": job.get("job_description_url"),
                 "jobDescriptionFilename": job.get("job_description_filename"),
-                "highlights": [
-                    h["highlight"] for h in job.get("job_highlights", [])
-                ],
-                "tags": [
-                    t["tag"] for t in job.get("job_tags", [])
-                ],
-                "sections": [
-                    {
-                        "title": s["title"],
-                        "items": [
-                            i["item"] for i in s.get("job_section_items", [])
-                        ]
-                    }
-                    for s in job.get("job_sections", [])
-                ]
+                "highlights": highlights,
+                "tags": tags,
+                "sections": sections,
             })
 
         return result
@@ -460,14 +454,7 @@ def job_applicants(payload: Dict[str, Any], user: dict = Depends(get_current_use
             if not p:
                 continue
 
-            highlights = [h["highlight"] for h in p.get("people_highlights", []) if "highlight" in h]
-            tags = [t["tag"] for t in p.get("people_tags", []) if "tag" in t]
-
-            sections_raw = p.get("people_sections", [])
-            sections = []
-            for sec in sections_raw:
-                items = [it["item"] for it in sec.get("people_section_items", []) if "item" in it]
-                sections.append({"title": sec["title"], "items": items})
+            highlights, tags, sections = assemble_children(p, "people")
 
             work_experience = [
                 {

@@ -1,5 +1,27 @@
 from typing import Any
 
+
+def assemble_children(row: dict, prefix: str) -> tuple[list, list, list]:
+    """Flatten the nested highlights/tags/sections children of a people/job row.
+
+    `prefix` is "people" or "job". Reads the nested-select children already
+    present on `row` (e.g. row["people_highlights"]) and returns
+    `(highlights, tags, sections)` where sections is `[{"title", "items"}]`.
+    Centralises the assembly previously copy-pasted across the feed, profile,
+    and company controllers.
+    """
+    highlights = [h["highlight"] for h in row.get(f"{prefix}_highlights", []) if "highlight" in h]
+    tags = [t["tag"] for t in row.get(f"{prefix}_tags", []) if "tag" in t]
+    sections = [
+        {
+            "title": s.get("title"),
+            "items": [i["item"] for i in s.get(f"{prefix}_section_items", []) if "item" in i],
+        }
+        for s in row.get(f"{prefix}_sections", [])
+    ]
+    return highlights, tags, sections
+
+
 def api_error(e: Exception, operation: str = "") -> dict[str, Any]:
     """Build a richer error detail from an exception.
 

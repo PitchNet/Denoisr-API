@@ -99,11 +99,13 @@ def export_data(user: dict = Depends(get_current_user)):
     highlights = supabase.table("people_highlights").select("highlight").eq("person_id", person_id).execute()
     tags = supabase.table("people_tags").select("tag").eq("person_id", person_id).execute()
 
-    sections_res = supabase.table("people_sections").select("id, title").eq("person_id", person_id).execute()
-    sections = []
-    for sec in (sections_res.data or []):
-        items = supabase.table("people_section_items").select("item").eq("section_id", sec["id"]).execute()
-        sections.append({"title": sec["title"], "items": [i["item"] for i in (items.data or [])]})
+    sections_res = supabase.table("people_sections").select(
+        "id, title, people_section_items(item)"
+    ).eq("person_id", person_id).execute()
+    sections = [
+        {"title": sec["title"], "items": [i["item"] for i in (sec.get("people_section_items") or [])]}
+        for sec in (sections_res.data or [])
+    ]
 
     work_experience = supabase.table("people_work_experience") \
         .select("company, role, duration, description").eq("person_id", person_id).execute()
@@ -161,8 +163,9 @@ def delete_account(request: DeleteAccountRequest, response: Response, user: dict
     supabase.table("push_subscriptions").delete().eq("user_id", person_id).execute()
 
     sections = supabase.table("people_sections").select("id").eq("person_id", person_id).execute()
-    for sec in (sections.data or []):
-        supabase.table("people_section_items").delete().eq("section_id", sec["id"]).execute()
+    section_ids = [sec["id"] for sec in (sections.data or [])]
+    if section_ids:
+        supabase.table("people_section_items").delete().in_("section_id", section_ids).execute()
     supabase.table("people_sections").delete().eq("person_id", person_id).execute()
     supabase.table("people_highlights").delete().eq("person_id", person_id).execute()
     supabase.table("people_tags").delete().eq("person_id", person_id).execute()

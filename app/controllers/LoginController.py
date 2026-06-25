@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Request, Response
+from fastapi import APIRouter, HTTPException, Depends, Request, Response
 from pydantic import BaseModel, EmailStr
 from jose import jwt
 from datetime import datetime, timedelta
@@ -39,6 +39,11 @@ SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 10080
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
+
+# External integration config (env-overridable; defaults preserve prior behavior)
+APIFY_ACTOR_ID = os.getenv("APIFY_ACTOR_ID", "LpVuK3Zozwuipa5bp")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemma-4-31b-it")
+LINKEDIN_IMPORT_TTL_HOURS = int(os.getenv("LINKEDIN_IMPORT_TTL_HOURS", "24"))
 
 # --------------------------
 # Models (UPDATED for your payload)
@@ -108,26 +113,6 @@ def create_access_token(data: dict) -> str:
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def run_sql_script(script_name: str, context: dict):
-    """
-    Reads SQL file from app/scripts and executes via Supabase RPC
-    """
-    path = f"app/scripts/{script_name}.txt"
-
-    with open(path, "r") as f:
-        sql = f.read()
-
-    # OPTIONAL: replace placeholders like {{email}}
-    for k, v in context.items():
-        sql = sql.replace(f"{{{{{k}}}}}", str(v))
-
-    # Requires Postgres function:
-    # create function exec_sql(query text) returns void ...
-    response = supabase.rpc("exec_sql", {"query": sql}).execute()
-
-    return response
-
-
 # --------------------------
 # Get current user
 # --------------------------
@@ -166,12 +151,9 @@ def signup(user: UserCreate, response: Response):
         "salary": user.salary,
         "intro": user.intro,
         "organization": user.organization,
-        #"workpreference": user.workPreference,
-        #"country": None,
         "currentrole": user.currentRole,
         "introduction": user.intro,
         "name": user.name,
-        "experience": user.experience,
         "photo": user.photo
     }
 
@@ -369,7 +351,7 @@ Now restructure this LinkedIn data:
 
 def _cleanup_old_linkedin_import_jobs():
     try:
-        cutoff = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+        cutoff = (datetime.utcnow() - timedelta(hours=LINKEDIN_IMPORT_TTL_HOURS)).isoformat()
         supabase.table("linkedin_import_jobs").delete().lt("created_at", cutoff).execute()
     except Exception:
         pass
@@ -380,7 +362,7 @@ def _run_gemini_restructure(linkedin_data, profile_picture):
 
     gemini_client = genai.Client(api_key=GOOGLE_API_KEY)
     response = gemini_client.models.generate_content(
-        model="gemma-4-31b-it",
+        model=GEMINI_MODEL,
         contents=prompt,
     )
 
@@ -415,7 +397,7 @@ def linkedin_import_scrape(payload: Dict[str, Any]):
             "queries": [url],
         }
 
-        run = apify.actor("LpVuK3Zozwuipa5bp").call(run_input=run_input)
+        run = apify.actor(APIFY_ACTOR_ID).call(run_input=run_input)
 
         linkedin_data = []
         profile_picture = None

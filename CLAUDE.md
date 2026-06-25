@@ -35,6 +35,14 @@ python3 -m py_vapid
 | `RESEND_API_KEY` | API key for [Resend](https://resend.com), used to send password-reset emails. **If unset, `/forgotPassword` skips email entirely and returns the reset token directly in its JSON response** so the UI can jump straight to the "set a new password" screen — see the security note under Auth below before relying on this in production |
 | `RESEND_FROM_EMAIL` | `From` address for reset emails (default: `Denoisr <onboarding@resend.dev>`, Resend's shared sandbox sender — replace with a verified domain sender in production) |
 | `ADMIN_USER_IDS` | Comma-separated `people.id` UUIDs allowed to use `/AdminController` endpoints. No roles table — this is the entire admin model (see `auth_utils.is_admin`) |
+| `APIFY_ACTOR_ID` | Apify actor id for LinkedIn scraping (default: `LpVuK3Zozwuipa5bp`) |
+| `GEMINI_MODEL` | Google model used to restructure LinkedIn data (default: `gemma-4-31b-it`) |
+| `LINKEDIN_IMPORT_TTL_HOURS` | Age after which `linkedin_import_jobs` rows are opportunistically deleted (default: `24`) |
+| `RESET_TOKEN_EXPIRE_MINUTES` | Lifetime of password-reset JWTs (default: `30`) |
+| `IMGBB_TIMEOUT` | Timeout (s) for the ImgBB image POST (default: `60`) |
+| `IMGBB_TOKEN_TIMEOUT` | Timeout (s) for scraping the ImgBB session token (default: `30`) |
+| `MAX_UPLOAD_BYTES` | Max resume / job-description upload size in bytes (default: `10485760` = 10 MB) |
+| `PUSH_TTL_SECONDS` | Web-push TTL passed to `pywebpush` (default: `86400` = 24 h) |
 
 ## Architecture
 

@@ -10,6 +10,7 @@ from collections import defaultdict
 from app.controllers.NotificationController import send_push
 from app.auth_utils import get_current_user_row, get_optional_user_row
 from app.controllers.CompanyController import _relative_time
+from app.controllers._helpers import assemble_children
 # --------------------------
 # Load ENV
 # --------------------------
@@ -320,16 +321,7 @@ def fetch_people(filters: Dict[str, Any], user: str = Depends(get_current_user))
         for p in people:
             pid = p.get("id")
 
-            highlights = [h["highlight"] for h in p.get("people_highlights", []) if "highlight" in h]
-            tags = [t["tag"] for t in p.get("people_tags", []) if "tag" in t]
-
-            sections_raw = p.get("people_sections", [])
-            sections: List[Dict[str, Any]] = []
-            for sec in sections_raw:
-                sec_id = sec.get("id")
-                title = sec.get("title")
-                items = [it["item"] for it in sec.get("people_section_items", []) if "item" in it]
-                sections.append({"title": title, "items": items})
+            highlights, tags, sections = assemble_children(p, "people")
 
             result.append({
                 "id": pid,
@@ -461,8 +453,7 @@ def get_connections(q: str | None = None, archived: bool = False, user: dict = D
 
         for p in people:
             pid = p["id"]
-            highlights = [h["highlight"] for h in p.get("people_highlights", []) if "highlight" in h]
-            tags = [t["tag"] for t in p.get("people_tags", []) if "tag" in t]
+            highlights, tags, _ = assemble_children(p, "people")
 
             sections_raw = p.get("people_sections", [])
             details: List[Dict[str, Any]] = []
@@ -723,6 +714,7 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
         result = []
 
         for job in jobs:
+            highlights, tags, sections = assemble_children(job, "job")
             result.append({
                 "id": job["id"],
                 "kind": "jobs",
@@ -739,23 +731,9 @@ def fetch_jobs(filters: Dict[str, Any], user: str = Depends(get_current_user)):
                 "jobDescriptionUrl": job.get("job_description_url"),
                 "jobDescriptionFilename": job.get("job_description_filename"),
 
-                "highlights": [
-                    h["highlight"] for h in job.get("job_highlights", [])
-                ],
-
-                "tags": [
-                    t["tag"] for t in job.get("job_tags", [])
-                ],
-
-                "sections": [
-                    {
-                        "title": s["title"],
-                        "items": [
-                            i["item"] for i in s.get("job_section_items", [])
-                        ]
-                    }
-                    for s in job.get("job_sections", [])
-                ],
+                "highlights": highlights,
+                "tags": tags,
+                "sections": sections,
                 "bookmarked": job["id"] in bookmark_id_set,
             })
 
@@ -807,6 +785,7 @@ def get_job_by_id(job_id: str, user: dict | None = Depends(get_optional_user)):
             bookmarked = "bookmark" in actions
             applied = "accepted" in actions
 
+        highlights, tags, sections = assemble_children(job, "job")
         return {
             "job": {
                 "id": job["id"],
@@ -817,15 +796,9 @@ def get_job_by_id(job_id: str, user: dict | None = Depends(get_optional_user)):
                 "experience": job.get("experience"),
                 "salary": job.get("salary"),
                 "intro": job.get("intro"),
-                "highlights": [h["highlight"] for h in job.get("job_highlights", [])],
-                "tags": [t["tag"] for t in job.get("job_tags", [])],
-                "sections": [
-                    {
-                        "title": s["title"],
-                        "items": [i["item"] for i in s.get("job_section_items", [])],
-                    }
-                    for s in job.get("job_sections", [])
-                ],
+                "highlights": highlights,
+                "tags": tags,
+                "sections": sections,
                 "jobDescriptionUrl": job.get("job_description_url"),
                 "jobDescriptionFilename": job.get("job_description_filename"),
                 "postedAgo": _relative_time(job.get("created_at")),
@@ -872,6 +845,7 @@ def job_applications(user: dict = Depends(get_current_user)):
 
         result = []
         for job in jobs:
+            highlights, tags, sections = assemble_children(job, "job")
             result.append({
                 "id": job["id"],
                 "kind": "jobs",
@@ -884,21 +858,9 @@ def job_applications(user: dict = Depends(get_current_user)):
                 "experience": job.get("experience"),
                 "salary": job.get("salary"),
                 "intro": job.get("intro"),
-                "highlights": [
-                    h["highlight"] for h in job.get("job_highlights", [])
-                ],
-                "tags": [
-                    t["tag"] for t in job.get("job_tags", [])
-                ],
-                "sections": [
-                    {
-                        "title": s["title"],
-                        "items": [
-                            i["item"] for i in s.get("job_section_items", [])
-                        ]
-                    }
-                    for s in job.get("job_sections", [])
-                ]
+                "highlights": highlights,
+                "tags": tags,
+                "sections": sections,
             })
 
         return result

@@ -14,6 +14,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY")
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY")
 VAPID_CLAIM_EMAIL = os.getenv("VAPID_CLAIM_EMAIL", "notifications@denoisr.com")
+PUSH_TTL_SECONDS = int(os.getenv("PUSH_TTL_SECONDS", "86400"))
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -88,7 +89,7 @@ def send_push(user_id: str, title: str, body: str, data: Dict[str, Any] = None):
                 data=payload_bytes,
                 vapid_private_key=VAPID_PRIVATE_KEY,
                 vapid_claims={"sub": f"mailto:{VAPID_CLAIM_EMAIL}"},
-                ttl=86400,
+                ttl=PUSH_TTL_SECONDS,
                 verbose=True,
             )
             print(f"[send_push] Push response: {resp.status_code}")

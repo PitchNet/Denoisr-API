@@ -8,6 +8,7 @@ from supabase import create_client, Client
 from typing import List, Dict, Any, Optional
 from app.services.service import UploadImageKey
 from app.auth_utils import get_current_user_row
+from app.controllers._helpers import assemble_children
 
 load_dotenv()
 
@@ -17,6 +18,10 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 router = APIRouter(prefix="/ProfileController", tags=["Profile"])
+
+# Upload config (env-overridable; defaults preserve prior behavior)
+IMGBB_TIMEOUT = int(os.getenv("IMGBB_TIMEOUT", "60"))
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
 
 
 def get_current_user(request: Request):
@@ -40,14 +45,7 @@ def get_profile(user: dict = Depends(get_current_user)):
 
         p = person.data
 
-        highlights = [h["highlight"] for h in p.get("people_highlights", []) if "highlight" in h]
-        tags = [t["tag"] for t in p.get("people_tags", []) if "tag" in t]
-
-        sections_raw = p.get("people_sections", [])
-        sections: List[Dict[str, Any]] = []
-        for sec in sections_raw:
-            items = [it["item"] for it in sec.get("people_section_items", []) if "item" in it]
-            sections.append({"title": sec["title"], "items": items})
+        highlights, tags, sections = assemble_children(p, "people")
 
         return {
             "id": p["id"],
@@ -159,45 +157,52 @@ def update_profile(payload: Dict[str, Any], user: dict = Depends(get_current_use
 
         # Replace sections + items
         existing_sections = supabase.table("people_sections").select("id").eq("person_id", person_id).execute()
-        for sec in (existing_sections.data or []):
-            supabase.table("people_section_items").delete().eq("section_id", sec["id"]).execute()
+        existing_section_ids = [sec["id"] for sec in (existing_sections.data or [])]
+        if existing_section_ids:
+            supabase.table("people_section_items").delete().in_("section_id", existing_section_ids).execute()
         supabase.table("people_sections").delete().eq("person_id", person_id).execute()
 
         sections = payload.get("sections") or []
-        for section in sections:
-            section_insert = supabase.table("people_sections").insert({
-                "person_id": person_id, "title": section.get("title")
-            }).execute()
-            if section_insert.data:
-                section_id = section_insert.data[0]["id"]
-                items = section.get("items") or []
-                if items:
-                    supabase.table("people_section_items").insert([
-                        {"section_id": section_id, "item": item} for item in items
-                    ]).execute()
+        if sections:
+            inserted_sections = supabase.table("people_sections").insert([
+                {"person_id": person_id, "title": section.get("title")} for section in sections
+            ]).execute()
+            section_items = [
+                {"section_id": row["id"], "item": item}
+                for section, row in zip(sections, inserted_sections.data or [])
+                for item in (section.get("items") or [])
+            ]
+            if section_items:
+                supabase.table("people_section_items").insert(section_items).execute()
 
         # Replace work experience
         supabase.table("people_work_experience").delete().eq("person_id", person_id).execute()
         work_experience = payload.get("workExperience") or []
-        for we in work_experience:
-            supabase.table("people_work_experience").insert({
-                "person_id": person_id,
-                "company": we.get("company"),
-                "role": we.get("role"),
-                "duration": we.get("duration"),
-                "description": we.get("description"),
-            }).execute()
+        if work_experience:
+            supabase.table("people_work_experience").insert([
+                {
+                    "person_id": person_id,
+                    "company": we.get("company"),
+                    "role": we.get("role"),
+                    "duration": we.get("duration"),
+                    "description": we.get("description"),
+                }
+                for we in work_experience
+            ]).execute()
 
         # Replace projects
         supabase.table("people_projects").delete().eq("person_id", person_id).execute()
         projects = payload.get("projects") or []
-        for proj in projects:
-            supabase.table("people_projects").insert({
-                "person_id": person_id,
-                "name": proj.get("name"),
-                "url": proj.get("url"),
-                "description": proj.get("description"),
-            }).execute()
+        if projects:
+            supabase.table("people_projects").insert([
+                {
+                    "person_id": person_id,
+                    "name": proj.get("name"),
+                    "url": proj.get("url"),
+                    "description": proj.get("description"),
+                }
+                for proj in projects
+            ]).execute()
 
         return {"message": "Profile updated successfully"}
 
@@ -231,7 +236,7 @@ async def upload_image(file: UploadFile = File(...), user: dict = Depends(get_cu
             headers={
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
             },
-            timeout=60,
+            timeout=IMGBB_TIMEOUT,
         )
 
         if response.status_code != 200:
@@ -260,7 +265,7 @@ async def upload_resume(file: UploadFile = File(...), user: dict = Depends(get_c
         raise HTTPException(status_code=400, detail="Only PDF or DOCX files are allowed")
 
     contents = await file.read()
-    if len(contents) > 10 * 1024 * 1024:
+    if len(contents) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=400, detail="File must be under 10MB")
 
     content_type = file.content_type or (
